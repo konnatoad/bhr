@@ -1,395 +1,756 @@
+use bytemuck::{Pod, Zeroable};
+use glam::DVec3;
 use image::{ImageBuffer, Rgb};
+use rand::rngs::SmallRng;
+use rand::{RngExt, SeedableRng};
 use rayon::prelude::*;
 use std::f64::consts::PI;
+use wgpu::util::DeviceExt;
 
 // 4k because i hate myself
 const W: u32 = 3840;
 const H: u32 = 2160;
 
-// AA samples. 3 is “ok”. 4 is “why is my pc crying”
-const SS: u32 = 3;
+// simulation
+const ROCKS: usize = 3_800_000;
+const STEPS: usize = 8_000;
+const DT: f64 = 0.0018;
 
-// fake units. i am not doing real physics.
+// black hole
+const BH_MASS: f64 = 1.0;
 const BH_SIZE: f64 = 1.0;
 
-// “ring zone” where the cool lensing starts showing up
-const RING_ZONE: f64 = 1.5;
-
-// disk bounds (flat distance from center)
-const DISK_IN: f64 = 3.0;
+// disk
+const DISK_IN: f64 = 1.0;
 const DISK_OUT: f64 = 12.0;
 
-// if this is too high you get BLUE. if too low you get sad mud.
-const DISK_HEAT: f64 = 9000.0;
+// disk visual params (aka "numbers i poked until it looked right")
+const DISK_HEAT: f64 = 18000.0;
+const ADISK_DENSITY_V: f64 = 5.0;
+const ADISK_DENSITY_H: f64 = 5.0;
+const ADISK_HEIGHT: f64 = 0.02;
+const ADISK_LIT: f64 = 0.6;
+const ADISK_NOISE_SCALE: f64 = 1.5;
 
-// planck constant combo thing. copied. don’t ask.
-const HCK: f64 = 0.014388;
+// density grid resolution
+const DR: usize = 128;
+const DA: usize = 256;
 
-// camera setup
-const CAM_POS: V3 = V3 {
-    x: 0.0,
-    y: 4.0,
-    z: -15.0,
-};
-const CAM_LOOK: V3 = V3 {
-    x: 0.0,
-    y: -0.5,
-    z: 0.0,
-};
+// camera. low angle like the reference. that's the look.
+const CAM_POS: DVec3 = DVec3::new(0.0, 2.2, -14.0);
+const CAM_LOOK: DVec3 = DVec3::new(0.0, 0.0, 0.0);
 const FOV: f64 = 55.0;
 
-// “make it not dark”. vibes only.
-const EXPOSURE: f64 = 5.5;
+const EXPOSURE: f64 = 1.0;
 
-// rgb wavelength samples. idk, some guy said these.
-const WL_R: f64 = 700e-9;
-const WL_G: f64 = 546e-9;
-const WL_B: f64 = 435e-9;
+// ray march knobs
+const MAX_STEPS: u32 = 50_000;
+const RING_ZONE: f64 = 1.0;
+
+// AA. 2 is sane at 4k. 3 is "why is my gpu crying".
+const SS: u32 = 3;
 
 fn main() {
-    println!("rendering space noodles... or donut.. or whatever it ends up being...");
-    println!("{}x{} ss={} -> {} rays/pixel", W, H, SS, SS * SS);
-    println!("if it’s blue again i’m closing the editor");
+    println!("spawning {} rocks...", ROCKS);
+    let mut idiots = make_the_donut(ROCKS);
 
-    // yes this allocates everything first
-    // yes pros would stream tiles
-    // no i’m not rewriting it
-    let rows: Vec<Vec<[u8; 3]>> = (0..H)
-        .into_par_iter()
-        .map(|y| (0..W).map(|x| spaghettifier(x, y)).collect())
-        .collect();
+    println!("simulating {} steps...", STEPS);
+    let_the_idiots_spin(&mut idiots, STEPS);
 
-    let mut img = ImageBuffer::new(W, H);
-    for (y, row) in rows.iter().enumerate() {
-        for (x, &c) in row.iter().enumerate() {
-            img.put_pixel(x as u32, y as u32, Rgb(c));
+    println!("building density field from {} survivors...", idiots.len());
+    let field = build_field(&idiots);
+
+    println!("gpu ray marching {}x{} ss={}...", W, H, SS);
+    let rgb = pollster::block_on(render_wgpu(&field));
+
+    let mut img: ImageBuffer<Rgb<u8>, Vec<u8>> = ImageBuffer::new(W, H);
+    for y in 0..H as usize {
+        for x in 0..W as usize {
+            let i = (y * W as usize + x) * 3;
+            img.put_pixel(x as u32, y as u32, Rgb([rgb[i], rgb[i + 1], rgb[i + 2]]));
         }
     }
 
-    img.save("blackhole.png").unwrap();
-    println!("done. i’m scared to open it.");
+    img.save("blackhole_sim.png").unwrap();
+    println!("done. if it's ugly, spacetime did it.");
 }
 
-fn spaghettifier(x: u32, y: u32) -> [u8; 3] {
-    // one pixel, SSxSS subpixels, average it. anti-jaggies.
-    let mut r = 0.0_f64;
-    let mut g = 0.0_f64;
-    let mut b = 0.0_f64;
+// ── simulation ────────────────────────────────────────────────────────────
 
-    for sy in 0..SS {
-        for sx in 0..SS {
-            let fx = x as f64 + (sx as f64 + 0.5) / SS as f64;
-            let fy = y as f64 + (sy as f64 + 0.5) / SS as f64;
+#[derive(Clone)]
+struct Grain {
+    pos: DVec3,
+    vel: DVec3,
+    alive: bool,
+}
 
-            let (rr, gg, bb) = yeet_ray(fx, fy);
-            r += rr;
-            g += gg;
-            b += bb;
+fn make_the_donut(n: usize) -> Vec<Grain> {
+    let mut rng = SmallRng::seed_from_u64(0xdead_beef_cafe_babe);
+    let mut out = Vec::with_capacity(n);
+
+    for _ in 0..n {
+        let t: f64 = rng.random();
+        let r = DISK_IN + (DISK_OUT - DISK_IN) * t * t;
+        let a: f64 = rng.random::<f64>() * 2.0 * PI;
+        let y = (rng.random::<f64>() - 0.5) * 0.18 * (r / DISK_OUT).powf(0.4);
+        let pos = DVec3::new(r * a.cos(), y, r * a.sin());
+
+        let v_circ = (BH_MASS / r).sqrt();
+        let wobble = (rng.random::<f64>() - 0.5) * v_circ * 0.04;
+        let vel = DVec3::new(
+            -a.sin() * (v_circ + wobble),
+            (rng.random::<f64>() - 0.5) * 0.008,
+            a.cos() * (v_circ + wobble),
+        );
+
+        out.push(Grain {
+            pos,
+            vel,
+            alive: true,
+        });
+    }
+
+    out
+}
+
+fn let_the_idiots_spin(grains: &mut Vec<Grain>, steps: usize) {
+    let report_every = steps / 10;
+
+    for step in 0..steps {
+        if report_every > 0 && step % report_every == 0 {
+            println!(
+                "  step {}/{} alive={}",
+                step,
+                steps,
+                grains.iter().filter(|g| g.alive).count()
+            );
+        }
+
+        grains.par_iter_mut().for_each(|g| {
+            if !g.alive {
+                return;
+            }
+
+            let r2 = g.pos.length_squared();
+            let r = r2.sqrt();
+            if r < BH_SIZE {
+                g.alive = false;
+                return;
+            }
+
+            let inv_r3 = 1.0 / (r2 * r);
+            let grav = g.pos * (-BH_MASS * inv_r3 * (1.0 + 3.0 * BH_MASS / r));
+
+            let radial = g.pos / r;
+            let goo = radial * (-g.vel.dot(radial) * 0.0003);
+
+            let a = grav + goo;
+            g.vel += a * DT;
+            g.pos += g.vel * DT;
+
+            if g.pos.length() < BH_SIZE * 1.05 {
+                g.alive = false;
+            }
+        });
+    }
+
+    grains.retain(|g| g.alive);
+    println!("  {} rocks survived", grains.len());
+}
+
+// ── density field ─────────────────────────────────────────────────────────
+
+#[derive(Clone)]
+struct DiskField {
+    density: Vec<f32>,
+    vtan: Vec<f32>,
+    density_max: f32,
+}
+
+fn field_idx(ri: usize, ai: usize) -> usize {
+    ri * DA + ai
+}
+
+fn build_field(grains: &[Grain]) -> DiskField {
+    let mut density = vec![0.0_f64; DR * DA];
+    let mut vtan = vec![0.0_f64; DR * DA];
+    let mut counts = vec![0_u32; DR * DA];
+
+    for g in grains {
+        let flat = (g.pos.x * g.pos.x + g.pos.z * g.pos.z).sqrt();
+        if flat < DISK_IN || flat > DISK_OUT {
+            continue;
+        }
+
+        let ri = ((flat - DISK_IN) / (DISK_OUT - DISK_IN) * DR as f64) as usize;
+        let ri = ri.min(DR - 1);
+
+        let ang = g.pos.z.atan2(g.pos.x) + PI;
+        let ai = (ang / (2.0 * PI) * DA as f64) as usize % DA;
+
+        let i = field_idx(ri, ai);
+        density[i] += 1.0;
+
+        let spin = DVec3::new(-g.pos.z / flat, 0.0, g.pos.x / flat);
+        vtan[i] += g.vel.dot(spin);
+        counts[i] += 1;
+    }
+
+    for i in 0..DR * DA {
+        if counts[i] > 0 {
+            vtan[i] /= counts[i] as f64;
         }
     }
 
-    let div = (SS * SS) as f64;
-    [(r / div) as u8, (g / div) as u8, (b / div) as u8]
+    let density = blur_field(density);
+    let max_d = density.iter().cloned().fold(0.0_f64, f64::max).max(1.0);
+
+    DiskField {
+        density: density.into_iter().map(|v| v as f32).collect(),
+        vtan: vtan.into_iter().map(|v| v as f32).collect(),
+        density_max: max_d as f32,
+    }
 }
 
-fn yeet_ray(px: f64, py: f64) -> (f64, f64, f64) {
-    // shoot a ray from the camera through this subpixel
-    let (pos, dir) = make_camera_ray(px, py);
+fn blur_field(f: Vec<f64>) -> Vec<f64> {
+    let mut out = f.clone();
 
-    // march it. returns disk light + info for background
-    let (dr, dg, db, ate, bg_dir, swirl) = hit(pos, dir);
-
-    // “swirl” makes bg fade a bit. idk, looks less weird.
-    let bg_fade = if ate { 0.0 } else { (-swirl * 0.5).exp() };
-
-    // if we fell in, it’s just black
-    let (sr, sg, sb) = if ate {
-        (0.0, 0.0, 0.0)
-    } else {
-        space_bg(bg_dir)
-    };
-
-    // combine disk + bg, then exposure
-    let r = (dr + sr * bg_fade) * EXPOSURE;
-    let g = (dg + sg * bg_fade) * EXPOSURE;
-    let b = (db + sb * bg_fade) * EXPOSURE;
-
-    // tonemap to 0..255
-    let [rr, gg, bb] = film_it(r, g, b);
-    (rr as f64, gg as f64, bb as f64)
-}
-
-fn make_camera_ray(px: f64, py: f64) -> (V3, V3) {
-    // screen coords -> camera ray
-    let half = (FOV.to_radians() * 0.5).tan();
-    let aspect = W as f64 / H as f64;
-
-    let sx = (px / W as f64 * 2.0 - 1.0) * half * aspect;
-    let sy = (1.0 - py / H as f64 * 2.0) * half;
-
-    let fwd = make_unit(sub(CAM_LOOK, CAM_POS));
-    let right = make_unit(cross(fwd, V3::UP));
-    let up = cross(right, fwd);
-
-    // if you flip sy by accident the whole world becomes cursed
-    let dir = make_unit(add(add(scale(right, sx), scale(up, sy)), fwd));
-    (CAM_POS, dir)
-}
-
-fn hit(mut pos: V3, mut dir: V3) -> (f64, f64, f64, bool, V3, f64) {
-    // march the ray, bend it, check disk crossings
-    let mut col = [0.0_f64; 3];
-    let mut last_y = pos.y;
-    let mut swirl = 0.0_f64;
-
-    // 32k steps because i hate waiting AND i hate blurry rings
-    for _ in 0..32_000 {
-        let dist = len(pos);
-
-        // fell into the hole
-        if dist < BH_SIZE * 0.97 {
-            return (col[0], col[1], col[2], true, dir, swirl);
-        }
-
-        // escaped to infinity (aka background)
-        if dist > 120.0 {
-            return (col[0], col[1], col[2], false, dir, swirl);
-        }
-
-        // step size “schedule”. scuffed but it works. i’m not touching it.
-        let step = if dist < RING_ZONE * 1.10 {
-            0.0012
-        } else if dist < RING_ZONE * 1.40 {
-            0.0025
-        } else if dist < RING_ZONE * 2.0 {
-            0.006
-        } else if dist < RING_ZONE * 5.0 {
-            0.02
-        } else {
-            0.05 * (dist / 8.0).min(2.5)
-        };
-
-        // bending. yes there’s a 1.5. no i’m not arguing with it.
-        let to_center = scale(pos, 1.0 / dist);
-        let inward = dot(dir, to_center);
-        let sideways = sub(dir, scale(to_center, inward));
-
-        let bend = 1.5 * BH_SIZE / (dist * dist); // dumb line that makes it look right. staying.
-        dir = make_unit(add(dir, scale(sideways, -bend * step))); // sign matters. don’t “fix” it.
-        swirl += bend * step;
-
-        // disk crossing check (y=0 plane)
-        let new_y = pos.y + dir.y * step;
-        if last_y.signum() != new_y.signum() {
-            let flat = (pos.x * pos.x + pos.z * pos.z).sqrt();
-            if flat > DISK_IN && flat < DISK_OUT {
-                let c = disk(flat, pos, dir);
-                col[0] += c[0];
-                col[1] += c[1];
-                col[2] += c[2];
+    // cheap blur. good enough. don't @ me.
+    for _ in 0..2 {
+        let src = out.clone();
+        for ri in 0..DR {
+            for ai in 0..DA {
+                let l = (ai + DA - 1) % DA;
+                let r = (ai + 1) % DA;
+                out[field_idx(ri, ai)] =
+                    (src[field_idx(ri, l)] + src[field_idx(ri, ai)] + src[field_idx(ri, r)]) / 3.0;
             }
         }
-
-        last_y = new_y;
-        pos = add(pos, scale(dir, step));
-
-        // if this ever NaNs i’m going to bed
-        // if !(pos.x.is_finite() && pos.y.is_finite() && pos.z.is_finite()) { break; }
     }
 
-    (col[0], col[1], col[2], false, dir, swirl)
+    out
 }
 
-fn disk(flat: f64, pos: V3, dir: V3) -> [f64; 3] {
-    // disk emission. takes flat radius + where we hit + ray dir.
-    // returns RGB in “not clamped” space.
+// ── GPU renderer ──────────────────────────────────────────────────────────
+//
+// IMPORTANT: WGSL uniform layout hates arrays unless their stride is 16.
+// so we avoid "array<u32>" in Params entirely.
+// also: align(16) so wgpu stops whining about sizes.
 
-    let ratio = flat / DISK_IN;
+#[repr(C, align(16))]
+#[derive(Copy, Clone, Pod, Zeroable)]
+struct Params {
+    w: u32,
+    h: u32,
+    ss: u32,
+    _pad0: u32,
 
-    // temp profile thing. yes it’s math. yes i hate it.
-    let heat = DISK_HEAT * (1.0 - ratio.powf(-0.5)).max(0.0).powf(0.25) * ratio.powf(-0.75);
+    bh_size: f32,
+    bh_mass: f32,
+    disk_in: f32,
+    disk_out: f32,
 
-    if heat < 500.0 {
-        return [0.0; 3];
-    }
+    disk_heat: f32,
+    density_max: f32,
+    ad_v: f32,
+    ad_h: f32,
 
-    // orbital speed. capped because i refuse to debug infinite brightness.
-    let speed = (BH_SIZE / (2.0 * flat)).sqrt().min(0.70);
+    ad_height: f32,
+    ad_lit: f32,
+    ad_noise: f32,
+    exposure: f32,
 
-    // tangential direction around center (in xz plane)
-    let spin = make_unit(V3 {
-        x: pos.z,
-        y: 0.0,
-        z: -pos.x,
+    max_steps: u32,
+    _pad1a: u32,
+    _pad1b: u32,
+    _pad1c: u32,
+
+    cam_pos: [f32; 4],
+    cam_look: [f32; 4],
+
+    fov: f32,
+    ring_zone: f32,
+    _pad2: [f32; 2],
+}
+
+async fn render_wgpu(field: &DiskField) -> Vec<u8> {
+    // if this trips, your shader struct doesn't match this rust struct.
+    assert_eq!(std::mem::size_of::<Params>(), 128);
+
+    let instance = wgpu::Instance::default();
+    let adapter = instance
+        .request_adapter(&wgpu::RequestAdapterOptions {
+            power_preference: wgpu::PowerPreference::HighPerformance,
+            compatible_surface: None,
+            force_fallback_adapter: false,
+        })
+        .await
+        .expect("no gpu");
+
+    let (device, queue) = adapter
+        .request_device(&wgpu::DeviceDescriptor {
+            label: Some("bhr"),
+            required_features: wgpu::Features::empty(),
+            required_limits: wgpu::Limits::default(),
+            experimental_features: wgpu::ExperimentalFeatures::default(),
+            memory_hints: wgpu::MemoryHints::default(),
+            trace: wgpu::Trace::Off,
+        })
+        .await
+        .expect("no device");
+
+    let mut packed = Vec::<f32>::with_capacity(DR * DA * 2);
+    packed.extend_from_slice(&field.density);
+    packed.extend_from_slice(&field.vtan);
+
+    let field_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("field"),
+        contents: bytemuck::cast_slice(&packed),
+        usage: wgpu::BufferUsages::STORAGE,
     });
 
-    // direction from hit point to camera
-    let to_cam = make_unit(neg(dir));
+    let params = Params {
+        w: W,
+        h: H,
+        ss: SS,
+        _pad0: 0,
 
-    // doppler factor. extremely touchy. do not poke.
-    let beta = dot(spin, to_cam) * speed;
-    let gamma = 1.0 / (1.0 - speed * speed).sqrt();
-    let dop = 1.0 / (gamma * (1.0 - beta)).max(0.01);
+        bh_size: BH_SIZE as f32,
+        bh_mass: BH_MASS as f32,
+        disk_in: DISK_IN as f32,
+        disk_out: DISK_OUT as f32,
 
-    // gravity dim. i don’t want to argue with it.
-    let grav = (1.0 - BH_SIZE / flat).max(0.01).sqrt();
+        disk_heat: DISK_HEAT as f32,
+        density_max: field.density_max.max(1.0),
+        ad_v: ADISK_DENSITY_V as f32,
+        ad_h: ADISK_DENSITY_H as f32,
 
-    // “observed” temp
-    let seen = heat * dop * grav;
+        ad_height: ADISK_HEIGHT as f32,
+        ad_lit: ADISK_LIT as f32,
+        ad_noise: ADISK_NOISE_SCALE as f32,
+        exposure: EXPOSURE as f32,
 
-    // brightness. g^4 because everyone says g^4. ok.
-    let bright = (seen / DISK_HEAT).powf(4.0) * dop.powf(4.0).min(10.0);
+        max_steps: MAX_STEPS,
+        _pad1a: 0,
+        _pad1b: 0,
+        _pad1c: 0,
 
-    // color from planck samples
-    let (cr, cg, cb) = planck(seen);
+        cam_pos: [CAM_POS.x as f32, CAM_POS.y as f32, CAM_POS.z as f32, 0.0],
+        cam_look: [CAM_LOOK.x as f32, CAM_LOOK.y as f32, CAM_LOOK.z as f32, 0.0],
 
-    // tiny texture so it’s not a perfect toy donut
-    let ang = pos.z.atan2(pos.x);
-    let lumps =
-        (1.0 + 0.12 * (flat * 1.9 - ang * 2.7).sin() + 0.07 * (flat * 4.1 + ang * 5.8).cos())
-            .clamp(0.75, 1.25);
-
-    [
-        cr * bright * lumps,
-        cg * bright * lumps,
-        cb * bright * lumps,
-    ]
-}
-
-fn planck(temp: f64) -> (f64, f64, f64) {
-    // sampled planck-ish rgb. don’t ask me to derive it.
-
-    if temp < 200.0 {
-        return (0.0, 0.0, 0.0);
-    }
-
-    let sample = |wl: f64| -> f64 {
-        let x = HCK / (wl * temp);
-        if x > 500.0 {
-            0.0
-        } else if x < 1e-4 {
-            // tiny-x hack. recommended by “it stops exploding” people.
-            wl.powf(-4.0) * temp
-        } else {
-            wl.powf(-5.0) / (x.exp() - 1.0)
-        }
+        fov: FOV as f32,
+        ring_zone: RING_ZONE as f32,
+        _pad2: [0.0; 2],
     };
 
-    let r = sample(WL_R);
-    let g = sample(WL_G);
-    let b = sample(WL_B);
+    let params_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("params"),
+        contents: bytemuck::bytes_of(&params),
+        usage: wgpu::BufferUsages::UNIFORM,
+    });
 
-    let m = r.max(g).max(b).max(1e-300);
-    (r / m, g / m, b / m)
-}
+    let out_len = (W as usize) * (H as usize);
 
-fn space_bg(d: V3) -> (f64, f64, f64) {
-    // fake background. minimal effort. still looks ok.
+    let out_buf = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("out"),
+        size: (out_len * 4) as u64,
+        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+        mapped_at_creation: false,
+    });
 
-    let d = make_unit(d);
+    let readback = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("rb"),
+        size: (out_len * 4) as u64,
+        usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
 
-    let mut r = 0.0003_f64;
-    let mut g = 0.0003_f64;
-    let mut b = 0.0004_f64;
+    let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("bhr"),
+        source: wgpu::ShaderSource::Wgsl(SHADER.into()),
+    });
 
-    let upness = d.y;
-    let around = d.z.atan2(d.x);
+    let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("bgl"),
+        entries: &[
+            wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: Some(std::num::NonZeroU64::new(128).unwrap()),
+                },
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 1,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Storage { read_only: true },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 2,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Storage { read_only: false },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+        ],
+    });
 
-    let band = (-upness * upness * 7.0).exp()
-        * (0.4 + 0.3 * (around * 2.1).sin() + 0.2 * (around * 4.9 + 0.8).cos()).max(0.0);
+    let bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("bg"),
+        layout: &bgl,
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: params_buf.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: field_buf.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 2,
+                resource: out_buf.as_entire_binding(),
+            },
+        ],
+    });
 
-    r += band * 0.010;
-    g += band * 0.012;
-    b += band * 0.014;
+    let pl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: Some("pl"),
+        bind_group_layouts: &[&bgl],
+        immediate_size: 0,
+    });
 
-    // tiny warm tint so bg isn’t a blue LED strip
-    r += (1.0 - upness.abs()).max(0.0) * 0.0004;
+    let pipe = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+        label: Some("pipe"),
+        layout: Some(&pl),
+        module: &shader,
+        entry_point: Some("main"),
+        compilation_options: Default::default(),
+        cache: None,
+    });
 
-    (r, g, b)
-}
+    let mut enc =
+        device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("enc") });
 
-fn film_it(r: f64, g: f64, b: f64) -> [u8; 3] {
-    // tonemap + gamma. i copied it once. it works. moving on.
-
-    let f = |x: f64| ((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14)).clamp(0.0, 1.0);
-    let gamma = |x: f64| x.max(0.0).powf(1.0 / 2.2);
-
-    [
-        (gamma(f(r)) * 255.0) as u8,
-        (gamma(f(g)) * 255.0) as u8,
-        (gamma(f(b)) * 255.0) as u8,
-    ]
-}
-
-#[derive(Copy, Clone)]
-struct V3 {
-    x: f64,
-    y: f64,
-    z: f64,
-}
-
-impl V3 {
-    const UP: V3 = V3 {
-        x: 0.0,
-        y: 1.0,
-        z: 0.0,
-    };
-}
-
-fn add(a: V3, b: V3) -> V3 {
-    V3 {
-        x: a.x + b.x,
-        y: a.y + b.y,
-        z: a.z + b.z,
+    {
+        let mut cp = enc.begin_compute_pass(&wgpu::ComputePassDescriptor {
+            label: Some("pass"),
+            timestamp_writes: None,
+        });
+        cp.set_pipeline(&pipe);
+        cp.set_bind_group(0, &bg, &[]);
+        cp.dispatch_workgroups((W + 15) / 16, (H + 15) / 16, 1);
     }
-}
-fn sub(a: V3, b: V3) -> V3 {
-    V3 {
-        x: a.x - b.x,
-        y: a.y - b.y,
-        z: a.z - b.z,
+
+    enc.copy_buffer_to_buffer(&out_buf, 0, &readback, 0, (out_len * 4) as u64);
+    queue.submit(Some(enc.finish()));
+
+    let slice = readback.slice(..);
+    let (tx, rx) = std::sync::mpsc::channel();
+
+    slice.map_async(wgpu::MapMode::Read, move |r| {
+        tx.send(r).unwrap();
+    });
+
+    let _ = device.poll(wgpu::PollType::Wait {
+        submission_index: None,
+        timeout: Some(std::time::Duration::MAX),
+    });
+
+    rx.recv().unwrap().expect("map failed");
+
+    let data = slice.get_mapped_range().to_vec();
+    readback.unmap();
+
+    let mut rgb = vec![0u8; out_len * 3];
+    for i in 0..out_len {
+        rgb[i * 3] = data[i * 4];
+        rgb[i * 3 + 1] = data[i * 4 + 1];
+        rgb[i * 3 + 2] = data[i * 4 + 2];
     }
-}
-fn scale(a: V3, s: f64) -> V3 {
-    V3 {
-        x: a.x * s,
-        y: a.y * s,
-        z: a.z * s,
-    }
-}
-fn neg(a: V3) -> V3 {
-    V3 {
-        x: -a.x,
-        y: -a.y,
-        z: -a.z,
-    }
-}
-fn dot(a: V3, b: V3) -> f64 {
-    a.x * b.x + a.y * b.y + a.z * b.z
+    rgb
 }
 
-fn cross(a: V3, b: V3) -> V3 {
-    V3 {
-        x: a.y * b.z - a.z * b.y,
-        y: a.z * b.x - a.x * b.z,
-        z: a.x * b.y - a.y * b.x,
-    }
+// ── WGSL compute shader ───────────────────────────────────────────────────
+//
+// fixes:
+// - NO arrays in uniform (wgsl uniform arrays need 16-byte stride -> pain)
+// - black hole is actually black (no "inside horizon glow")
+// - disk "bends under" more: take smaller steps when near disk plane
+// - redshift side gets a lil brightness bump (blue side unchanged)
+
+const SHADER: &str = r#"
+struct Params {
+  w: u32, h: u32, ss: u32, _pad0: u32,
+
+  bh_size: f32, bh_mass: f32, disk_in: f32, disk_out: f32,
+  disk_heat: f32, density_max: f32, ad_v: f32, ad_h: f32,
+  ad_height: f32, ad_lit: f32, ad_noise: f32, exposure: f32,
+
+  max_steps: u32, _pad1a: u32, _pad1b: u32, _pad1c: u32,
+
+  cam_pos: vec4<f32>,
+  cam_look: vec4<f32>,
+
+  fov: f32, ring_zone: f32, _pad2a: f32, _pad2b: f32,
 }
 
-fn len(a: V3) -> f64 {
-    (a.x * a.x + a.y * a.y + a.z * a.z).sqrt()
+@group(0) @binding(0) var<uniform>            P     : Params;
+@group(0) @binding(1) var<storage, read>      field : array<f32>;
+@group(0) @binding(2) var<storage,read_write> out   : array<u32>;
+
+fn make_unit(v: vec3<f32>) -> vec3<f32> {
+  let l = length(v);
+  if l < 1e-12 { return vec3<f32>(0.0, 0.0, 1.0); }
+  return v / l;
 }
 
-// normalize vector. i refuse to name it vnorm, that sounds like a math degree.
-fn make_unit(v: V3) -> V3 {
-    let l = len(v);
-    if l < 1e-12 {
-        V3 {
-            x: 0.0,
-            y: 0.0,
-            z: 1.0,
-        }
-    } else {
-        scale(v, 1.0 / l)
-    }
+fn filmic(x: f32) -> f32 {
+  let x2 = max(x - 0.004, 0.0);
+  return (x2 * (6.2*x2 + 0.5)) / (x2 * (6.2*x2 + 1.7) + 0.06);
 }
+
+fn hash3(p: vec3<f32>) -> f32 {
+  var q = fract(p * vec3<f32>(127.1, 311.7, 74.7));
+  q += dot(q, q.yzx + 19.19);
+  return fract((q.x + q.y) * q.z);
+}
+
+fn hash2(x: f32, y: f32) -> f32 {
+  return fract(sin(x*127.1 + y*311.7)*43758.5453);
+}
+
+fn noise2(x: f32, y: f32) -> f32 {
+  let xi = floor(x); let yi = floor(y);
+  let xf = x-xi; let yf = y-yi;
+  let u = xf*xf*(3.0-2.0*xf);
+  let v = yf*yf*(3.0-2.0*yf);
+  return mix(mix(hash2(xi,yi), hash2(xi+1.0,yi), u),
+             mix(hash2(xi,yi+1.0), hash2(xi+1.0,yi+1.0), u), v);
+}
+
+fn fbm(x: f32, y: f32) -> f32 {
+  var v = 0.0; var a = 0.5;
+  var xx = x; var yy = y;
+  for (var i = 0; i < 3; i++) {
+    v  += a * noise2(xx, yy);
+    xx *= 2.1; yy *= 2.1; a *= 0.5;
+  }
+  return v;
+}
+
+fn sample_field(flat: f32, px: f32, pz: f32) -> vec2<f32> {
+  if flat < P.disk_in || flat > P.disk_out { return vec2<f32>(0.0); }
+  var ri = u32(((flat-P.disk_in)/(P.disk_out-P.disk_in))*128.0);
+  ri = min(ri, 127u);
+  let ang = atan2(pz, px) + 3.14159265;
+  let ai  = u32((ang/(2.0*3.14159265))*256.0) % 256u;
+  let i   = ri*256u + ai;
+  return vec2<f32>(field[i], field[i + 128u*256u]);
+}
+
+fn planck_sample(wl: f32, temp: f32) -> f32 {
+  let x = 0.014388/(wl*temp);
+  if x > 500.0 { return 0.0; }
+  if x < 1e-4  { return pow(wl,-4.0)*temp; }
+  return pow(wl,-5.0)/(exp(x)-1.0);
+}
+
+fn planck_rgb(temp: f32) -> vec3<f32> {
+  if temp < 100.0 { return vec3<f32>(0.0); }
+  let r = planck_sample(700e-9, temp);
+  let g = planck_sample(546e-9, temp);
+  let b = planck_sample(435e-9, temp);
+  let m = max(max(r,g), max(b,1e-30));
+  return vec3<f32>(r/m, g/m, b/m);
+}
+
+fn stars(dir: vec3<f32>) -> vec3<f32> {
+  let d = make_unit(dir);
+  var col = vec3<f32>(0.0);
+
+  let s1 = floor(d * 250.0);
+  let h1 = hash3(s1);
+  if h1 > 0.994 {
+    let br = pow((h1-0.994)/0.006, 2.0) * 0.9;
+    let ct = hash3(s1+0.5);
+    col += vec3<f32>(br*(0.8+ct*0.4), br*(0.85+ct*0.15), br);
+  }
+
+  let s2 = floor(d * 700.0);
+  let h2 = hash3(s2+77.7);
+  if h2 > 0.9985 {
+    let br = pow((h2-0.9985)/0.0015, 2.0) * 2.5;
+    let ct = hash3(s2+0.3);
+    let dx = abs(fract(d.x*700.0) - 0.5);
+    let spike = 1.0 + max(0.0, 0.3 - dx*15.0);
+    col += vec3<f32>(br*spike, br*(0.9+ct*0.1)*spike, br*(0.7+ct*0.3)*spike);
+  }
+
+  let lat  = asin(clamp(d.y, -1.0, 1.0));
+  let lon  = atan2(d.z, d.x);
+  let band = exp(-lat*lat*20.0) * (0.004 + 0.002*noise2(lon*3.0, lat*8.0));
+  col += vec3<f32>(band*0.6, band*0.65, band*0.9);
+
+  return col;
+}
+
+fn disk_color(pos: vec3<f32>, dir: vec3<f32>) -> vec3<f32> {
+  let flat = sqrt(pos.x*pos.x + pos.z*pos.z);
+
+  let h    = pos.y / (flat * P.ad_height);
+  let vert = exp(-h*h * P.ad_v);
+  if vert < 0.001 { return vec3<f32>(0.0); }
+
+  let rnorm = (flat - P.disk_in) / (P.disk_out - P.disk_in);
+  let horiz = max(pow(1.0-rnorm, P.ad_h) * pow(rnorm+0.04, 0.1), 0.0);
+  if horiz < 0.001 { return vec3<f32>(0.0); }
+
+  let band = 1.0 + 0.18 * sin(flat * 2.8 - 1.2) + 0.08 * sin(flat * 6.1);
+
+  let ang  = atan2(pos.z, pos.x);
+  let n    = clamp(fbm(flat*P.ad_noise, ang*P.ad_noise*0.5), 0.0, 1.0);
+
+  let sv    = sample_field(flat, pos.x, pos.z);
+  let dcell = sv.x;
+  let vtan  = sv.y;
+
+  let dm      = max(P.density_max, 1.0);
+  let density = vert * horiz * band * (0.35 + 0.65*n) * clamp(dcell/dm, 0.0, 1.0);
+
+  let ratio = flat / P.disk_in;
+  let heat  = P.disk_heat
+    * pow(max(1.0 - pow(ratio, -0.5), 0.0), 0.25)
+    * pow(ratio, -0.75);
+  if heat < 200.0 { return vec3<f32>(0.0); }
+
+  let spin   = make_unit(vec3<f32>(-pos.z, 0.0, pos.x));
+  let to_cam = make_unit(-dir);
+  let speed  = min(abs(vtan), 0.72);
+  let beta   = -dot(spin, to_cam) * sign(vtan) * speed;
+  let gamma  = 1.0 / sqrt(max(1.0 - speed*speed, 0.001));
+  let dop    = 1.0 / max(gamma*(1.0-beta), 0.01);
+
+  // blue side: leave it alone. red side: tiny “i can see it better” bump.
+  var red_boost = 1.0;
+  if dop < 1.0 {
+    // dop 0.7 -> +~0.24, dop 0.5 -> +~0.40
+    red_boost = 1.0 + clamp((1.0 - dop) * 0.8, 0.0, 0.55);
+  }
+
+  // still cap beaming so it doesn't nuke the whole frame.
+  let beam = min(pow(dop, 2.5), 2.2);
+
+  let grav = sqrt(max(1.0 - P.bh_size/flat, 0.01));
+  let seen = heat * dop * grav;
+
+  let bright = density
+    * pow(clamp(seen/P.disk_heat, 0.0, 1.8), 2.0)
+    * beam
+    * P.ad_lit
+    * red_boost;
+
+  return planck_rgb(seen) * bright;
+}
+
+fn make_camera_ray(px: f32, py: f32) -> vec3<f32> {
+  let half   = tan(radians(P.fov)*0.5);
+  let aspect = f32(P.w)/f32(P.h);
+  let sx = (px/f32(P.w)*2.0 - 1.0)*half*aspect;
+  let sy = (1.0 - py/f32(P.h)*2.0)*half;
+  let fwd   = make_unit(P.cam_look.xyz - P.cam_pos.xyz);
+  let right = make_unit(cross(fwd, vec3<f32>(0.0,1.0,0.0)));
+  let up    = cross(right, fwd);
+  return make_unit(right*sx + up*sy + fwd);
+}
+
+fn march(px: u32, py: u32, sx: u32, sy: u32) -> vec3<f32> {
+  let fx = f32(px) + (f32(sx)+0.5)/f32(P.ss);
+  let fy = f32(py) + (f32(sy)+0.5)/f32(P.ss);
+
+  var pos   = P.cam_pos.xyz;
+  var dir   = make_camera_ray(fx, fy);
+  var col   = vec3<f32>(0.0);
+  var swirl = 0.0;
+
+  for (var i: u32 = 0u; i < P.max_steps; i++) {
+    let dist = length(pos);
+
+    // actual black hole: if the ray crosses horizon-ish, it's gone. NO glow.
+    if dist < P.bh_size * 0.97 {
+      return col;
+    }
+
+    if dist > 120.0 {
+      return col + stars(dir);
+    }
+
+    // base step
+    var step = 0.05 * min(dist/8.0, 2.5);
+
+    // ring area: finer
+    if      dist < P.ring_zone * 1.04 { step = 0.0003; }
+    else if dist < P.ring_zone * 1.12 { step = 0.0008; }
+    else if dist < P.ring_zone * 1.30 { step = 0.002;  }
+    else if dist < P.ring_zone * 1.80 { step = 0.006;  }
+    else if dist < P.ring_zone * 3.5  { step = 0.015;  }
+    else if dist < P.ring_zone * 8.0  { step = 0.03;   }
+
+    // "disk bends under" helper:
+    // when we're in the disk radius and near the disk plane, shrink step
+    // so we don't hop over that lensed far-side ribbon.
+    let flat = sqrt(pos.x*pos.x + pos.z*pos.z);
+    if flat > P.disk_in && flat < P.disk_out {
+      let disk_half = max(flat * P.ad_height * 2.8, 0.02);
+      if abs(pos.y) < disk_half {
+        step = min(step, 0.0018);
+      }
+    }
+
+    // GR bending. 1.5 is load-bearing.
+    let tc       = pos / dist;
+    let sideways = dir - tc*dot(dir,tc);
+    let bend     = 1.5 * P.bh_size / (dist*dist);
+    dir   = make_unit(dir + sideways*(-bend*step));
+    swirl += bend * step;
+
+    if flat > P.disk_in && flat < P.disk_out {
+      col = min(col + disk_color(pos, dir), vec3<f32>(10.0));
+    }
+
+    pos += dir * step;
+  }
+
+  return col;
+}
+
+@compute @workgroup_size(16, 16, 1)
+fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
+  if gid.x >= P.w || gid.y >= P.h { return; }
+
+  var acc = vec3<f32>(0.0);
+  for (var sy: u32 = 0u; sy < P.ss; sy++) {
+    for (var sx: u32 = 0u; sx < P.ss; sx++) {
+      acc += march(gid.x, gid.y, sx, sy);
+    }
+  }
+  acc = acc * (P.exposure / f32(P.ss*P.ss));
+
+  let rr = u32(clamp(filmic(acc.x), 0.0, 1.0) * 255.0);
+  let gg = u32(clamp(filmic(acc.y), 0.0, 1.0) * 255.0);
+  let bb = u32(clamp(filmic(acc.z), 0.0, 1.0) * 255.0);
+
+  out[gid.y*P.w + gid.x] = rr | (gg<<8u) | (bb<<16u) | (255u<<24u);
+}
+"#;
