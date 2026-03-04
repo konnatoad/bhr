@@ -1,3 +1,28 @@
+// COSMIC PASTA SIMULATOR
+//
+// featuring:
+// 15 million screaming noodles
+// illegal gravity seasoning
+// photon harassment
+// accretion disk vomit
+//
+// what this cursed thing does:
+// - summon a ridiculous amount of tiny space noodles
+// - throw them near an angry gravity marble (black hole)
+// - stir the noodles with questionable relativistic witchcraft
+// - let angry marble math bend spacetime like overcooked spaghetti
+// - convert the surviving pasta chaos into a density oracle grid
+// - ray-march photons through warped space until they confess a picture
+// - dump result into a png and pretend the math was intentional
+//
+// warning:
+// some parts are actual physics.
+// some parts are me poking constants until the cosmic pasta looks right.
+// somewhere between those two lives the truth.
+//
+// if it breaks: spacetime shifted again.
+// if it works: do not touch the haunted constants.
+
 use bytemuck::{Pod, Zeroable};
 use glam::DVec3;
 use image::{ImageBuffer, Rgb};
@@ -7,62 +32,74 @@ use rayon::prelude::*;
 use std::f64::consts::PI;
 use wgpu::util::DeviceExt;
 
-// 4k because i hate myself
+// WARNING:
+// this summons millions of cosmic noodles,
+// bends spacetime slightly illegally,
+// and then paints an accretion disk made of astrophysical pasta vomit.
+// if it looks wrong: either relativity or the pasta spirits.
 const W: u32 = 3840;
 const H: u32 = 2160;
 
-// simulation
-const ROCKS: usize = 3_800_000;
+// how many noodles we throw into the gravity cauldron
+const ROCKS: usize = 15_000_000;
+
+// how long we keep chanting at the void
 const STEPS: usize = 8_000;
+
+// timestep: small so the universe doesn't instantly file a complaint
 const DT: f64 = 0.0018;
 
-// black hole
+// black hole: angry altar / gravity tax collector
 const BH_MASS: f64 = 1.0;
-const BH_SIZE: f64 = 1.0;
+const BH_SIZE: f64 = 1.0; // radius of "no refunds, no witnesses"
 
-// disk
+// cursed pasta ring bounds
 const DISK_IN: f64 = 1.0;
 const DISK_OUT: f64 = 12.0;
 
-// disk visual params (aka "numbers i poked until it looked right")
-const DISK_HEAT: f64 = 18000.0;
-const ADISK_DENSITY_V: f64 = 5.0;
-const ADISK_DENSITY_H: f64 = 5.0;
-const ADISK_HEIGHT: f64 = 0.02;
-const ADISK_LIT: f64 = 0.6;
-const ADISK_NOISE_SCALE: f64 = 1.5;
+// visuals: unholy sliders i poked until it stopped looking like wet lint
+const DISK_HEAT: f64 = 18000.0; // glow spell intensity
+const ADISK_DENSITY_V: f64 = 5.0; // vertical squish curse
+const ADISK_DENSITY_H: f64 = 5.0; // horizontal fade chant
+const ADISK_HEIGHT: f64 = 0.01; // cosmic crepe thickness
+const ADISK_LIT: f64 = 0.6; // "pls show up on screen" rune
+const ADISK_NOISE_SCALE: f64 = 1.5; // turbulence dial (for fake trauma texture)
 
-// density grid resolution
+// donut pixels (grid of suffering)
 const DR: usize = 128;
 const DA: usize = 256;
 
-// camera. low angle like the reference. that's the look.
+// camera: filming forbidden pasta rituals from a low angle
 const CAM_POS: DVec3 = DVec3::new(0.0, 2.2, -14.0);
 const CAM_LOOK: DVec3 = DVec3::new(0.0, 0.0, 0.0);
 const FOV: f64 = 55.0;
 
-const EXPOSURE: f64 = 1.0;
+const EXPOSURE: f64 = 1.0; // when the void is too emo
 
-// ray march knobs
+// ray march knobs (how many times we poke spacetime with a stick)
 const MAX_STEPS: u32 = 50_000;
 const RING_ZONE: f64 = 1.0;
 
-// AA. 2 is sane at 4k. 3 is "why is my gpu crying".
+// AA: 2 is sane. 3 is "my gpu is now a candle"
 const SS: u32 = 3;
 
 fn main() {
-    println!("spawning {} rocks...", ROCKS);
+    println!("summoning {} space noodles...", ROCKS);
     let mut idiots = make_the_donut(ROCKS);
 
-    println!("simulating {} steps...", STEPS);
+    println!("stirring gravity cauldron for {} steps...", STEPS);
     let_the_idiots_spin(&mut idiots, STEPS);
 
-    println!("building density field from {} survivors...", idiots.len());
+    println!(
+        "distilling pasta fog into a grid from {} survivors...",
+        idiots.len()
+    );
     let field = build_field(&idiots);
 
-    println!("gpu ray marching {}x{} ss={}...", W, H, SS);
+    println!("gpu photon bullying {}x{} ss={}...", W, H, SS);
     let rgb = pollster::block_on(render_wgpu(&field));
 
+    // shovel bytes into png so humans can point at it and go "wow"
     let mut img: ImageBuffer<Rgb<u8>, Vec<u8>> = ImageBuffer::new(W, H);
     for y in 0..H as usize {
         for x in 0..W as usize {
@@ -72,31 +109,41 @@ fn main() {
     }
 
     img.save("blackhole_sim.png").unwrap();
-    println!("done. if it's ugly, spacetime did it.");
+    println!("done. if it’s ugly, blame spacetime. i’m just the pasta witch.");
 }
-
-// ── simulation ────────────────────────────────────────────────────────────
 
 #[derive(Clone)]
 struct Grain {
     pos: DVec3,
     vel: DVec3,
-    alive: bool,
+    alive: bool, // vibe check flag. false means it got eaten by the void.
 }
 
 fn make_the_donut(n: usize) -> Vec<Grain> {
-    let mut rng = SmallRng::seed_from_u64(0xdead_beef_cafe_babe);
+    let mut rng = SmallRng::seed_from_u64(0xdead_beef_cafe_babe); // deterministic curse
     let mut out = Vec::with_capacity(n);
 
     for _ in 0..n {
+        // bias toward inner ring because the demon lives there
         let t: f64 = rng.random();
         let r = DISK_IN + (DISK_OUT - DISK_IN) * t * t;
+
+        // random angle around the cosmic noodle
         let a: f64 = rng.random::<f64>() * 2.0 * PI;
+
+        // tiny vertical wobble so the pasta cloud isn't a perfect lie
         let y = (rng.random::<f64>() - 0.5) * 0.18 * (r / DISK_OUT).powf(0.4);
+
+        // actual position in 3d sadness
         let pos = DVec3::new(r * a.cos(), y, r * a.sin());
 
+        // orbit speed (newton cosplay, don't tell einstein)
         let v_circ = (BH_MASS / r).sqrt();
+
+        // wobble: inject chaos, as a treat
         let wobble = (rng.random::<f64>() - 0.5) * v_circ * 0.04;
+
+        // tangent velocity so it spins like it’s possessed
         let vel = DVec3::new(
             -a.sin() * (v_circ + wobble),
             (rng.random::<f64>() - 0.5) * 0.008,
@@ -106,7 +153,7 @@ fn make_the_donut(n: usize) -> Vec<Grain> {
         out.push(Grain {
             pos,
             vel,
-            alive: true,
+            alive: true, // optimistic. foolish.
         });
     }
 
@@ -119,35 +166,46 @@ fn let_the_idiots_spin(grains: &mut Vec<Grain>, steps: usize) {
     for step in 0..steps {
         if report_every > 0 && step % report_every == 0 {
             println!(
-                "  step {}/{} alive={}",
+                "  chant {}/{} alive={}",
                 step,
                 steps,
                 grains.iter().filter(|g| g.alive).count()
             );
         }
 
+        // parallel chaos because cpu go brrrr
         grains.par_iter_mut().for_each(|g| {
             if !g.alive {
-                return;
+                return; // already got vacuumed by the void
             }
 
             let r2 = g.pos.length_squared();
             let r = r2.sqrt();
+
+            // touched the angry marble. deleted.
             if r < BH_SIZE {
                 g.alive = false;
                 return;
             }
 
+            // gravity hex (i am not doing real GR, i’m summoning the vibe of it)
             let inv_r3 = 1.0 / (r2 * r);
+
+            // this term is literally "i whispered general relativity at newton"
             let grav = g.pos * (-BH_MASS * inv_r3 * (1.0 + 3.0 * BH_MASS / r));
 
+            // tiny damping so noodles don't become confetti
             let radial = g.pos / r;
             let goo = radial * (-g.vel.dot(radial) * 0.0003);
 
+            // let gravity ruin everyone's day
             let a = grav + goo;
+
+            // euler integration: cheap spellcasting
             g.vel += a * DT;
             g.pos += g.vel * DT;
 
+            // horizon-ish cleanup because i refuse to debate edge cases at 3am
             if g.pos.length() < BH_SIZE * 1.05 {
                 g.alive = false;
             }
@@ -155,16 +213,14 @@ fn let_the_idiots_spin(grains: &mut Vec<Grain>, steps: usize) {
     }
 
     grains.retain(|g| g.alive);
-    println!("  {} rocks survived", grains.len());
+    println!("  {} noodles survived (barely)", grains.len());
 }
-
-// ── density field ─────────────────────────────────────────────────────────
 
 #[derive(Clone)]
 struct DiskField {
     density: Vec<f32>,
     vtan: Vec<f32>,
-    density_max: f32,
+    density_max: f32, // normalization so the shader doesn't go supernova
 }
 
 fn field_idx(ri: usize, ai: usize) -> usize {
@@ -172,26 +228,38 @@ fn field_idx(ri: usize, ai: usize) -> usize {
 }
 
 fn build_field(grains: &[Grain]) -> DiskField {
+    // density = how much cosmic pasta is packed here
     let mut density = vec![0.0_f64; DR * DA];
+
+    // vtan = how fast the pasta is zooming around
     let mut vtan = vec![0.0_f64; DR * DA];
+
+    // counts = how many noodles screamed into each cell
     let mut counts = vec![0_u32; DR * DA];
 
     for g in grains {
+        // flatten to disk plane: y is cringe, we live in xz now
         let flat = (g.pos.x * g.pos.x + g.pos.z * g.pos.z).sqrt();
         if flat < DISK_IN || flat > DISK_OUT {
             continue;
         }
 
+        // radial bucket (donut layers)
         let ri = ((flat - DISK_IN) / (DISK_OUT - DISK_IN) * DR as f64) as usize;
         let ri = ri.min(DR - 1);
 
+        // angular bucket (donut slices)
         let ang = g.pos.z.atan2(g.pos.x) + PI;
         let ai = (ang / (2.0 * PI) * DA as f64) as usize % DA;
 
         let i = field_idx(ri, ai);
+
         density[i] += 1.0;
 
+        // tangential direction around the disk
         let spin = DVec3::new(-g.pos.z / flat, 0.0, g.pos.x / flat);
+
+        // average spin per cell
         vtan[i] += g.vel.dot(spin);
         counts[i] += 1;
     }
@@ -202,6 +270,7 @@ fn build_field(grains: &[Grain]) -> DiskField {
         }
     }
 
+    // pasta cosmetics: smooth it so it doesn't look like minecraft ravioli
     let density = blur_field(density);
     let max_d = density.iter().cloned().fold(0.0_f64, f64::max).max(1.0);
 
@@ -216,6 +285,7 @@ fn blur_field(f: Vec<f64>) -> Vec<f64> {
     let mut out = f.clone();
 
     // cheap blur. good enough. don't @ me.
+    // this is literally "stir the sauce gently"
     for _ in 0..2 {
         let src = out.clone();
         for ri in 0..DR {
@@ -233,10 +303,14 @@ fn blur_field(f: Vec<f64>) -> Vec<f64> {
 
 // ── GPU renderer ──────────────────────────────────────────────────────────
 //
-// IMPORTANT: WGSL uniform layout hates arrays unless their stride is 16.
-// so we avoid "array<u32>" in Params entirely.
-// also: align(16) so wgpu stops whining about sizes.
+// welcome to the photon torture chamber.
+// wgsl uniform layout is a drama queen.
+// align(16) so wgpu stops screaming at me.
 
+// WARNING:
+// i do not fully know what i'm doing.
+// if it breaks: spacetime did it.
+// if it works: also spacetime. i just held the spoon.
 #[repr(C, align(16))]
 #[derive(Copy, Clone, Pod, Zeroable)]
 struct Params {
@@ -274,9 +348,10 @@ struct Params {
 }
 
 async fn render_wgpu(field: &DiskField) -> Vec<u8> {
-    // if this trips, your shader struct doesn't match this rust struct.
+    // if this trips, uniform layout mismatch. aka wgsl gremlin time.
     assert_eq!(std::mem::size_of::<Params>(), 128);
 
+    // summon gpu
     let instance = wgpu::Instance::default();
     let adapter = instance
         .request_adapter(&wgpu::RequestAdapterOptions {
@@ -285,7 +360,7 @@ async fn render_wgpu(field: &DiskField) -> Vec<u8> {
             force_fallback_adapter: false,
         })
         .await
-        .expect("no gpu");
+        .expect("no gpu (ritual failed)");
 
     let (device, queue) = adapter
         .request_device(&wgpu::DeviceDescriptor {
@@ -297,8 +372,9 @@ async fn render_wgpu(field: &DiskField) -> Vec<u8> {
             trace: wgpu::Trace::Off,
         })
         .await
-        .expect("no device");
+        .expect("no device (the void said no)");
 
+    // pack density + vtan into one buffer because i hate myself less than two buffers
     let mut packed = Vec::<f32>::with_capacity(DR * DA * 2);
     packed.extend_from_slice(&field.density);
     packed.extend_from_slice(&field.vtan);
@@ -351,6 +427,7 @@ async fn render_wgpu(field: &DiskField) -> Vec<u8> {
 
     let out_len = (W as usize) * (H as usize);
 
+    // output buffer: where the gpu dumps its pasta painting
     let out_buf = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("out"),
         size: (out_len * 4) as u64,
@@ -358,6 +435,7 @@ async fn render_wgpu(field: &DiskField) -> Vec<u8> {
         mapped_at_creation: false,
     });
 
+    // readback buffer: the "bring it back to cpu so i can look at it" bucket
     let readback = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("rb"),
         size: (out_len * 4) as u64,
@@ -365,14 +443,17 @@ async fn render_wgpu(field: &DiskField) -> Vec<u8> {
         mapped_at_creation: false,
     });
 
+    // compile shader (wgsl is a language made by goblins)
     let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("bhr"),
         source: wgpu::ShaderSource::Wgsl(SHADER.into()),
     });
 
+    // bind group layout: where i pretend i understand binding rules
     let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
         label: Some("bgl"),
         entries: &[
+            // uniforms: small sacred scroll
             wgpu::BindGroupLayoutEntry {
                 binding: 0,
                 visibility: wgpu::ShaderStages::COMPUTE,
@@ -383,6 +464,7 @@ async fn render_wgpu(field: &DiskField) -> Vec<u8> {
                 },
                 count: None,
             },
+            // field: pasta oracle grid
             wgpu::BindGroupLayoutEntry {
                 binding: 1,
                 visibility: wgpu::ShaderStages::COMPUTE,
@@ -393,6 +475,7 @@ async fn render_wgpu(field: &DiskField) -> Vec<u8> {
                 },
                 count: None,
             },
+            // out: where the photons cry into
             wgpu::BindGroupLayoutEntry {
                 binding: 2,
                 visibility: wgpu::ShaderStages::COMPUTE,
@@ -406,6 +489,7 @@ async fn render_wgpu(field: &DiskField) -> Vec<u8> {
         ],
     });
 
+    // bind group: actual binding of the sacred objects
     let bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("bg"),
         layout: &bgl,
@@ -425,12 +509,14 @@ async fn render_wgpu(field: &DiskField) -> Vec<u8> {
         ],
     });
 
+    // pipeline layout: "ok gpu, here’s your rulebook"
     let pl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
         label: Some("pl"),
         bind_group_layouts: &[&bgl],
         immediate_size: 0,
     });
 
+    // compute pipeline: where we officially start committing photon crimes
     let pipe = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
         label: Some("pipe"),
         layout: Some(&pl),
@@ -440,39 +526,49 @@ async fn render_wgpu(field: &DiskField) -> Vec<u8> {
         cache: None,
     });
 
+    // command encoder: i write down instructions for the gpu like it's a demon contract
     let mut enc =
         device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("enc") });
 
     {
+        // compute pass: the spell circle
         let mut cp = enc.begin_compute_pass(&wgpu::ComputePassDescriptor {
             label: Some("pass"),
             timestamp_writes: None,
         });
+
         cp.set_pipeline(&pipe);
         cp.set_bind_group(0, &bg, &[]);
+
+        // idk why 16x16 is "the way", but everyone does it, so i do it too
         cp.dispatch_workgroups((W + 15) / 16, (H + 15) / 16, 1);
     }
 
+    // copy the gpu painting into the readback bucket
     enc.copy_buffer_to_buffer(&out_buf, 0, &readback, 0, (out_len * 4) as u64);
     queue.submit(Some(enc.finish()));
 
     let slice = readback.slice(..);
     let (tx, rx) = std::sync::mpsc::channel();
 
+    // map buffer async because wgpu likes drama
     slice.map_async(wgpu::MapMode::Read, move |r| {
         tx.send(r).unwrap();
     });
 
+    // wait. if you hear sobbing, that's the gpu.
     let _ = device.poll(wgpu::PollType::Wait {
         submission_index: None,
         timeout: Some(std::time::Duration::MAX),
     });
 
-    rx.recv().unwrap().expect("map failed");
+    rx.recv().unwrap().expect("map failed (alignment curse?)");
 
+    // pull bytes out. do not ask questions.
     let data = slice.get_mapped_range().to_vec();
     readback.unmap();
 
+    // unpack rgba -> rgb (alpha is just here for emotional support)
     let mut rgb = vec![0u8; out_len * 3];
     for i in 0..out_len {
         rgb[i * 3] = data[i * 4];
@@ -484,11 +580,10 @@ async fn render_wgpu(field: &DiskField) -> Vec<u8> {
 
 // ── WGSL compute shader ───────────────────────────────────────────────────
 //
-// fixes:
-// - NO arrays in uniform (wgsl uniform arrays need 16-byte stride -> pain)
-// - black hole is actually black (no "inside horizon glow")
-// - disk "bends under" more: take smaller steps when near disk plane
-// - redshift side gets a lil brightness bump (blue side unchanged)
+// shader jail:
+// i absolutely do not fully understand half of this, i just know where it bites.
+// photons get bullied until they draw cosmic pasta vomit.
+// if a physicist sees this: no you didn't.
 
 const SHADER: &str = r#"
 struct Params {
@@ -511,27 +606,32 @@ struct Params {
 @group(0) @binding(2) var<storage,read_write> out   : array<u32>;
 
 fn make_unit(v: vec3<f32>) -> vec3<f32> {
+  // normalize before it becomes cursed spaghetti
   let l = length(v);
   if l < 1e-12 { return vec3<f32>(0.0, 0.0, 1.0); }
   return v / l;
 }
 
 fn filmic(x: f32) -> f32 {
+  // tone map so the pasta doesn't become nuclear
   let x2 = max(x - 0.004, 0.0);
   return (x2 * (6.2*x2 + 0.5)) / (x2 * (6.2*x2 + 1.7) + 0.06);
 }
 
 fn hash3(p: vec3<f32>) -> f32 {
+  // random numbers in space. yes. it’s witchcraft.
   var q = fract(p * vec3<f32>(127.1, 311.7, 74.7));
   q += dot(q, q.yzx + 19.19);
   return fract((q.x + q.y) * q.z);
 }
 
 fn hash2(x: f32, y: f32) -> f32 {
+  // i cast: SIN WIZARDRY
   return fract(sin(x*127.1 + y*311.7)*43758.5453);
 }
 
 fn noise2(x: f32, y: f32) -> f32 {
+  // noise so the disk looks like it has trauma
   let xi = floor(x); let yi = floor(y);
   let xf = x-xi; let yf = y-yi;
   let u = xf*xf*(3.0-2.0*xf);
@@ -541,6 +641,7 @@ fn noise2(x: f32, y: f32) -> f32 {
 }
 
 fn fbm(x: f32, y: f32) -> f32 {
+  // layered noise because one noise wasn't annoying enough
   var v = 0.0; var a = 0.5;
   var xx = x; var yy = y;
   for (var i = 0; i < 3; i++) {
@@ -551,6 +652,7 @@ fn fbm(x: f32, y: f32) -> f32 {
 }
 
 fn sample_field(flat: f32, px: f32, pz: f32) -> vec2<f32> {
+  // consult the pasta oracle grid (density + spin)
   if flat < P.disk_in || flat > P.disk_out { return vec2<f32>(0.0); }
   var ri = u32(((flat-P.disk_in)/(P.disk_out-P.disk_in))*128.0);
   ri = min(ri, 127u);
@@ -561,6 +663,7 @@ fn sample_field(flat: f32, px: f32, pz: f32) -> vec2<f32> {
 }
 
 fn planck_sample(wl: f32, temp: f32) -> f32 {
+  // planck-ish: hot pasta glows more. science-ish.
   let x = 0.014388/(wl*temp);
   if x > 500.0 { return 0.0; }
   if x < 1e-4  { return pow(wl,-4.0)*temp; }
@@ -568,6 +671,7 @@ fn planck_sample(wl: f32, temp: f32) -> f32 {
 }
 
 fn planck_rgb(temp: f32) -> vec3<f32> {
+  // temperature -> rgb (sauce color chooser)
   if temp < 100.0 { return vec3<f32>(0.0); }
   let r = planck_sample(700e-9, temp);
   let g = planck_sample(546e-9, temp);
@@ -577,6 +681,7 @@ fn planck_rgb(temp: f32) -> vec3<f32> {
 }
 
 fn stars(dir: vec3<f32>) -> vec3<f32> {
+  // fake stars so the void isn't socially awkward
   let d = make_unit(dir);
   var col = vec3<f32>(0.0);
 
@@ -607,6 +712,7 @@ fn stars(dir: vec3<f32>) -> vec3<f32> {
 }
 
 fn disk_color(pos: vec3<f32>, dir: vec3<f32>) -> vec3<f32> {
+  // accretion disk = cosmic pasta vomit spinning at illegal speed
   let flat = sqrt(pos.x*pos.x + pos.z*pos.z);
 
   let h    = pos.y / (flat * P.ad_height);
@@ -642,16 +748,15 @@ fn disk_color(pos: vec3<f32>, dir: vec3<f32>) -> vec3<f32> {
   let gamma  = 1.0 / sqrt(max(1.0 - speed*speed, 0.001));
   let dop    = 1.0 / max(gamma*(1.0-beta), 0.01);
 
-  // blue side: leave it alone. red side: tiny “i can see it better” bump.
+  // idfk why doppler makes it look so good but it does. i’m not asking.
   var red_boost = 1.0;
   if dop < 1.0 {
-    // dop 0.7 -> +~0.24, dop 0.5 -> +~0.40
     red_boost = 1.0 + clamp((1.0 - dop) * 0.8, 0.0, 0.55);
   }
 
-  // still cap beaming so it doesn't nuke the whole frame.
   let beam = min(pow(dop, 2.5), 2.2);
 
+  // gravitational redshift-ish: photons leaving the hole get tired and sad
   let grav = sqrt(max(1.0 - P.bh_size/flat, 0.01));
   let seen = heat * dop * grav;
 
@@ -665,6 +770,7 @@ fn disk_color(pos: vec3<f32>, dir: vec3<f32>) -> vec3<f32> {
 }
 
 fn make_camera_ray(px: f32, py: f32) -> vec3<f32> {
+  // camera ray: point at the void and hope it doesn't bite
   let half   = tan(radians(P.fov)*0.5);
   let aspect = f32(P.w)/f32(P.h);
   let sx = (px/f32(P.w)*2.0 - 1.0)*half*aspect;
@@ -676,6 +782,7 @@ fn make_camera_ray(px: f32, py: f32) -> vec3<f32> {
 }
 
 fn march(px: u32, py: u32, sx: u32, sy: u32) -> vec3<f32> {
+  // photon bullying loop: poke spacetime until it draws pasta
   let fx = f32(px) + (f32(sx)+0.5)/f32(P.ss);
   let fy = f32(py) + (f32(sy)+0.5)/f32(P.ss);
 
@@ -687,7 +794,7 @@ fn march(px: u32, py: u32, sx: u32, sy: u32) -> vec3<f32> {
   for (var i: u32 = 0u; i < P.max_steps; i++) {
     let dist = length(pos);
 
-    // actual black hole: if the ray crosses horizon-ish, it's gone. NO glow.
+    // black hole is actually black. no glow. no forgiveness.
     if dist < P.bh_size * 0.97 {
       return col;
     }
@@ -696,10 +803,10 @@ fn march(px: u32, py: u32, sx: u32, sy: u32) -> vec3<f32> {
       return col + stars(dir);
     }
 
-    // base step
+    // base step: small near pain, bigger far away
     var step = 0.05 * min(dist/8.0, 2.5);
 
-    // ring area: finer
+    // ring area: finer steps so we don't skip the lensed ribbon of doom
     if      dist < P.ring_zone * 1.04 { step = 0.0003; }
     else if dist < P.ring_zone * 1.12 { step = 0.0008; }
     else if dist < P.ring_zone * 1.30 { step = 0.002;  }
@@ -708,8 +815,7 @@ fn march(px: u32, py: u32, sx: u32, sy: u32) -> vec3<f32> {
     else if dist < P.ring_zone * 8.0  { step = 0.03;   }
 
     // "disk bends under" helper:
-    // when we're in the disk radius and near the disk plane, shrink step
-    // so we don't hop over that lensed far-side ribbon.
+    // idfk how to do this "properly" so i just take tiny steps near the disk plane.
     let flat = sqrt(pos.x*pos.x + pos.z*pos.z);
     if flat > P.disk_in && flat < P.disk_out {
       let disk_half = max(flat * P.ad_height * 2.8, 0.02);
@@ -718,13 +824,14 @@ fn march(px: u32, py: u32, sx: u32, sy: u32) -> vec3<f32> {
       }
     }
 
-    // GR bending. 1.5 is load-bearing.
+    // GR-ish bending. 1.5 is load-bearing. if you touch it, it breaks. trust me bro.
     let tc       = pos / dist;
     let sideways = dir - tc*dot(dir,tc);
     let bend     = 1.5 * P.bh_size / (dist*dist);
     dir   = make_unit(dir + sideways*(-bend*step));
     swirl += bend * step;
 
+    // if we're inside the pasta ring radius, add sauce
     if flat > P.disk_in && flat < P.disk_out {
       col = min(col + disk_color(pos, dir), vec3<f32>(10.0));
     }
@@ -739,6 +846,7 @@ fn march(px: u32, py: u32, sx: u32, sy: u32) -> vec3<f32> {
 fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
   if gid.x >= P.w || gid.y >= P.h { return; }
 
+  // supersampling: more photon bullying per pixel
   var acc = vec3<f32>(0.0);
   for (var sy: u32 = 0u; sy < P.ss; sy++) {
     for (var sx: u32 = 0u; sx < P.ss; sx++) {
