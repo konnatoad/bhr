@@ -41,10 +41,10 @@ const W: u32 = 3840;
 const H: u32 = 2160;
 
 // how many noodles we throw into the gravity cauldron
-const ROCKS: usize = 15_000_000;
+const ROCKS: usize = 800_000;
 
 // how long we keep chanting at the void
-const STEPS: usize = 8_000;
+const STEPS: usize = 4_000;
 
 // timestep: small so the universe doesn't instantly file a complaint
 const DT: f64 = 0.0018;
