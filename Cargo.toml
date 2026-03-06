@@ -1,6 +1,6 @@
 [package]
 name = "bhr"
-version = "0.1.0"
+version = "0.2.21"
 edition = "2024"
 
 [dependencies]
@@ -12,6 +12,7 @@ noise = "0.9"
 wgpu = "28.0.0"
 pollster = "0.4"
 bytemuck = { version = "1.16", features = ["derive"] }
+exr = "1.74.0"
 
 # cuda is optional until you actually install toolkit
 cudarc = { version = "0.19", optional = true, features = ["cuda-13010"] }
