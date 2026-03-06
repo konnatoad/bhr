@@ -139,10 +139,11 @@ dependencies = [
 
 [[package]]
 name = "bhr"
-version = "0.1.0"
+version = "0.2.21"
 dependencies = [
  "bytemuck",
  "cudarc",
+ "exr",
  "glam",
  "image",
  "noise",
