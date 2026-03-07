@@ -75,8 +75,8 @@ const DA: usize = 3072; // 640x2560 for good sauce
 // everything below here is mostly vibe tuning.
 
 // NOTE: black hole properties.
-const BH_MASS: f64 = 2.0; // 2.0 is "realistic"
-const BH_SIZE: f64 = 0.85; // radius of "no refunds, no witnesses"
+const BH_MASS: f64 = 2.6; // 2.0 is "realistic"
+const BH_SIZE: f64 = 1.5; // radius of "no refunds, no witnesses"
 // put BH_MASS 2.5+ and BH_SIZE 1.0+ for more cinematic evil marble
 
 // NOTE: cursed pasta ring bounds
@@ -85,7 +85,7 @@ const DISK_OUT: f64 = 12.0; // 12.0 also looks believable
 
 // NOTE: disk appearance sliders
 // these were tuned until the disk stopped looking like wet lint.
-const DISK_HEAT: f64 = 18000.0; // glow spell intensity
+const DISK_HEAT: f64 = 20000.0; // glow spell intensity
 const ADISK_DENSITY_V: f64 = 5.0; // vertical squish curse
 const ADISK_DENSITY_H: f64 = 3.2; // horizontal fade chant
 const ADISK_HEIGHT: f64 = 0.014; // cosmic crepe thickness (must stay thin)
@@ -97,7 +97,7 @@ const ADISK_NOISE_SCALE: f64 = 2.2; // turbulence dial (fake trauma texture)
 const CAM_POS: DVec3 = DVec3::new(0.0, 1.2, -14.0); // 0.0, 2.2, -14.0 is my defaults
 const CAM_LOOK: DVec3 = DVec3::new(1.5, 1.5, 0.0); // 0.0, 0.0, 0.0 = looking directly at marble
 const CAM_ROLL: f64 = -8.0; // degrees
-const FOV: f64 = 65.0; // how far u watching the emo marble from
+const FOV: f64 = 70.0; // how far u watching the emo marble from
 
 // NOTE: preview brightness for PNG output
 const EXPOSURE: f64 = 0.46; // when the void is too emo
@@ -110,11 +110,11 @@ const RING_ZONE: f64 = 1.0; // arbitrary numbers that barely does anything
 // PERF:
 // number of particles in the disk simulation.
 // higher = smoother density field but slower CPU phase.
-const ROCKS: usize = 40_000_000; // honestly 8mil is fine... 3mil if want faster
+const ROCKS: usize = 8_000_000; // honestly 8mil is fine... 3mil if want faster
 
 // PERF:
 // how long the particle simulation runs.
-const STEPS: usize = 8_000; // 4k is pretty default. honestly no need to touch
+const STEPS: usize = 4_000; // 4k is pretty default. honestly no need to touch
 
 // WARNING:
 // simulation timestep.
@@ -458,9 +458,9 @@ fn make_the_donut(n: usize) -> Vec<Grain> {
 
         // tangent velocity so it spins like it’s possessed
         let vel = DVec3::new(
-            -a.sin() * (v_circ + wobble),
+            a.sin() * (v_circ + wobble),
             (rng.random::<f64>() - 0.5) * 0.008,
-            a.cos() * (v_circ + wobble),
+            -a.cos() * (v_circ + wobble),
         );
 
         out.push(Grain {
@@ -548,7 +548,7 @@ fn build_field(grains: &[Grain]) -> DiskField {
     let mut vtan = vec![0.0_f64; DR * DA];
 
     // counts = how many noodles screamed into each cell
-    let mut counts = vec![0_u32; DR * DA];
+    let mut counts = vec![0.0_f64; DR * DA];
 
     for g in grains {
         // flatten to disk plane: y is cringe, we live in xz now
@@ -584,13 +584,13 @@ fn build_field(grains: &[Grain]) -> DiskField {
 
                 density[idx] += weight;
                 vtan[idx] += vel * weight;
-                counts[idx] += weight as u32;
+                counts[idx] += weight;
             }
         }
     }
 
     for i in 0..DR * DA {
-        if counts[i] > 0 {
+        if counts[i] > 0.0 {
             vtan[i] /= counts[i] as f64;
         }
     }
@@ -608,7 +608,7 @@ fn build_field(grains: &[Grain]) -> DiskField {
 
 fn blur_field(mut f: Vec<f64>) -> Vec<f64> {
     // 0..4 ideal for faster render. 0..8 for smoother pasta
-    for _ in 0..8 {
+    for _ in 0..4 {
         let src = f.clone();
 
         for ri in 0..DR {
@@ -1340,7 +1340,7 @@ fn disk_color(pos: vec3<f32>, dir: vec3<f32>) -> vec3<f32> {
   if heat < 200.0 { return vec3<f32>(0.0); }
 
   let spin = make_unit(vec3<f32>(-pos.z, 0.0, pos.x));
-  let to_cam = make_unit(-dir);
+  let to_cam = make_unit(dir);
   let speed = min(abs(vtan), 0.72);
   let beta = -dot(spin, to_cam) * sign(vtan) * speed;
   let gamma = 1.0 / sqrt(max(1.0 - speed*speed, 0.001));
@@ -1438,21 +1438,15 @@ fn march(px: u32, py: u32, sx: u32, sy: u32) -> vec3<f32> {
 
     let bend_scale = 1.5 * P.bh_size / max(dist * dist, 0.0001);
     step *= clamp(1.0 / (1.0 + bend_scale * 40.0), 0.12, 1.0);
-    step = clamp(step, 0.00008, 0.05);
+    step = clamp(step, 0.00003, 0.03);
 
-    let tc = pos / dist;
-    let sideways = dir - tc * dot(dir, tc);
-
-    // NOTE:
-    // this is the fake-GR bend term.
-    // extremely load-bearing.
-    // touching it changes the entire lensing vibe instantly.
-    let bend = 1.5 * P.bh_size / (dist * dist);
-    dir = make_unit(dir + sideways * (-bend * step));
+    let grav_dir = -pos / dist;
+    let bend = P.bh_mass / (dist * dist);
+    dir = make_unit(dir + grav_dir * bend * step); 
     swirl += bend * step;
 
     if flat > P.disk_in && flat < P.disk_out {
-      col = min(col + disk_color(pos, dir), vec3<f32>(10.0));
+    col = min(col + disk_color(pos, dir) * 1.4, vec3<f32>(10.0));
     }
 
     pos += dir * step;
@@ -1702,7 +1696,7 @@ fn disk_color(pos: vec3<f32>, dir: vec3<f32>) -> vec3<f32> {
   if heat < 200.0 { return vec3<f32>(0.0); }
 
   let spin = make_unit(vec3<f32>(-pos.z, 0.0, pos.x));
-  let to_cam = make_unit(-dir);
+  let to_cam = make_unit(dir);
   let speed = min(abs(vtan), 0.72);
   let beta = -dot(spin, to_cam) * sign(vtan) * speed;
   let gamma = 1.0 / sqrt(max(1.0 - speed*speed, 0.001));
@@ -1801,12 +1795,11 @@ fn march(px: u32, py: u32, sx: u32, sy: u32) -> vec3<f32> {
 
     let bend_scale = 1.5 * P.bh_size / max(dist * dist, 0.0001);
     step *= clamp(1.0 / (1.0 + bend_scale * 40.0), 0.12, 1.0);
-    step = clamp(step, 0.00008, 0.05);
+    step = clamp(step, 0.00003, 0.03);
 
-    let tc = pos / dist;
-    let sideways = dir - tc * dot(dir, tc);
-    let bend = 1.5 * P.bh_size / (dist * dist);
-    dir = make_unit(dir + sideways * (-bend * step));
+    let grav_dir = -pos / dist;
+    let bend = P.bh_mass / (dist * dist);
+    dir = make_unit(dir + grav_dir * bend * step);
     swirl += bend * step;
 
     if flat > P.disk_in && flat < P.disk_out {
