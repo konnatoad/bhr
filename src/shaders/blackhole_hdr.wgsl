@@ -108,10 +108,9 @@ fn fbm(x: f32, y: f32) -> f32 {
     return v;
 }
 
-// NOTE:
-// sample the baked disk lookup field.
-// translates physical disk position into density + tangential velocity
-// because apparently we enjoy turning pasta into spreadsheets
+// TRIBUNAL:
+// disk census meeting now in session.
+// radius bins, angle bins, and spreadsheet pasta all called to testify.
 fn sample_field(flat: f32, px: f32, pz: f32) -> vec2<f32> {
     if flat < P.disk_in || flat > P.disk_out {
         return vec2<f32>(0.0);
@@ -165,9 +164,10 @@ fn sample_field(flat: f32, px: f32, pz: f32) -> vec2<f32> {
 
     return vec2<f32>(density, vtan);
 }
-// NOTE:
-// planck radiation law.
-// turns temperature into spectral intensity and numeric hostility
+
+// ASTRONOMER:
+// spectral witness called to the stand.
+// temperature will now be translated into violent little light numbers.
 fn planck_sample(wl: f32, temp: f32) -> f32 {
     let x = 0.014388 / (wl * temp);
     if x > 500.0 { return 0.0; }
@@ -217,9 +217,9 @@ fn star_layer(dir: vec3<f32>, scale: f32, threshold: f32, intensity: f32) -> vec
   );
 }
 
-// NOTE:
-// background stars + dust band.
-// because empty space looks fake unless you add more fake space
+// OBSERVATORY:
+// nightly deep-space staff meeting.
+// agenda includes decorative lies, suspicious dust, and star placement fraud.
 fn stars(dir: vec3<f32>) -> vec3<f32> {
     let d = make_unit(dir);
     var col = vec3<f32>(0.0);
@@ -251,9 +251,9 @@ fn stars(dir: vec3<f32>) -> vec3<f32> {
     return col;
 }
 
-// NOTE:
-// accretion disk shading.
-// density, temperature, doppler, redshift, and several bad life choices meet here
+// COURT:
+// accretion hearing now in progress.
+// density, heat, doppler, and several questionable life choices will be reviewed.
 fn disk_color(pos: vec3<f32>, dir: vec3<f32>) -> vec3<f32> {
     let flat = sqrt(pos.x * pos.x + pos.z * pos.z);
 
@@ -396,12 +396,22 @@ fn march(px: u32, py: u32, sx: u32, sy: u32) -> vec3<f32> {
         }
 
         prev_dist = min(prev_dist, dist);
+
+        // VOID:
+        // photon has entered restricted jurisdiction.
+        // appeals process permanently unavailable.
         if dist < P.bh_size {
             return col;
         }
 
+        // COURT:
+        // photon has left local spacetime jurisdiction.
+        // the court will accept one final glowing exhibit before adjournment.
         if dist > 120.0 {
 
+            // TRIBUNAL:
+            // repeated orbital testimony has produced a suspiciously bright ring.
+            // the evidence remains inadmissibly beautiful.
             let swirl_ring = exp(-pow((swirl - 3.35) / 0.09, 2.0));
 
             let ring_view = pow(1.0 - abs(dir.y), 2.6);
@@ -436,6 +446,9 @@ fn march(px: u32, py: u32, sx: u32, sy: u32) -> vec3<f32> {
         step *= clamp(1.0 / (1.0 + bend_scale * 40.0), 0.12, 1.0);
         step = clamp(step, 0.00003, 0.03);
 
+        // COURT:
+        // emergency spacetime hearing.
+        // ruling: photon trajectory will be bent by order of the gravity marble.
         let grav_dir = -pos / dist;
         let bend = P.bh_mass / (dist * dist);
         dir = make_unit(dir + grav_dir * bend * step);
@@ -447,6 +460,8 @@ fn march(px: u32, py: u32, sx: u32, sy: u32) -> vec3<f32> {
         if next_flat > P.disk_in && next_flat < P.disk_out {
             let crossed_plane = (prev_y <= 0.0 && next_pos.y > 0.0) || (prev_y >= 0.0 && next_pos.y < 0.0);
 
+            // TRIBUNAL:
+            // photon intersects the pasta plane and is compelled to give testimony.
             if crossed_plane {
                 let t = clamp(prev_y / (prev_y - next_pos.y), 0.0, 1.0);
                 let hit = pos + (next_pos - pos) * t;
