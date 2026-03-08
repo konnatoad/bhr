@@ -1,27 +1,40 @@
-// COSMIC PASTA SIMULATOR
-//
-// featuring:
-// 15 million screaming noodles
-// illegal gravity seasoning
-// photon harassment
-// accretion disk vomit
-//
-// what this cursed thing does:
-// - summon a ridiculous amount of tiny space noodles
-// - throw them near an angry gravity marble (black hole)
-// - stir the noodles with questionable relativistic witchcraft
-// - let angry marble math bend spacetime like overcooked spaghetti
-// - convert the surviving pasta chaos into a density oracle grid
-// - ray-march photons through warped space until they confess a picture
-// - dump result into a png and pretend the math was intentional
-//
-// warning:
-// some parts are actual physics.
-// some parts are me poking constants until the cosmic pasta looks right.
-// somewhere between those two lives the truth.
-//
-// if it breaks: spacetime shifted again.
-// if it works: do not touch the haunted constants.
+//! COSMIC PASTA SIMULATOR
+//!
+//! featuring:
+//! millions of screaming noodles
+//! illegal gravity seasoning
+//! photon harassment
+//! accretion disk marinara under active investigation
+//!
+//! what this cursed thing does:
+//!
+//! - summon a stupid amount of tiny orbital noodles
+//! - fling them toward an Angry Gravity Marble
+//! - force them through questionable relativistic pasta rituals
+//! - let the marble fold spacetime into a glowing spaghetti disaster
+//! - bake the surviving noodle chaos into a density field
+//! - ray-march photons through the void until they confess a picture
+//! - dump the result to disk and pretend any of this was under control
+//!
+//! approved, stamped, or reluctantly tolerated by:
+//!
+//! - the Δt Scheduling Clerk
+//! - the β-Limit Enforcement Office
+//! - the Relativistic Time Dilation Accountant
+//! - the Orbital Spin Registrar
+//! - the Radiative Spectrum Curator
+//! - the Cosmic Fat Inspector
+//! - the Orbit Radius Cartographer
+//! - the Pixel Budget Inspector
+//!
+//! WARNING:
+//! some of this is real physics.
+//! some of this is pasta sorcery with paperwork.
+//! somewhere between those two lives the renderer.
+//!
+//! if it breaks: spacetime moved.
+//! if it works: leave the haunted constants alone.
+//! if you increase the resolution like an idiot: expect a visit from the Pixel Budget Inspector.
 
 use bytemuck::{Pod, Zeroable};
 use glam::DVec3;
@@ -33,94 +46,113 @@ use std::env;
 use std::f64::consts::PI;
 use wgpu::util::DeviceExt;
 
-// this summons millions of cosmic noodles,
-// bends spacetime slightly illegally,
-// and then paints an accretion disk made of astrophysical pasta vomit.
-// if it looks wrong: either relativity or the pasta spirits.
-
-// WARNING:
+// NOTE:
 // SETTINGS TWEAK AS YOU WISH
 // most important knobs first.
 // if the render looks cursed, start debugging up here.
 
-// NOTE: Anti-aliasing / supersampling.
-// 2 = sane
-// 3 = very clean
-// 4 = GPU starts sweating
+/// NOTE: Anti-aliasing / supersampling.
+/// 2 = sane
+/// 3 = very clean
+/// 4 = GPU starts sweating
 const SS: u32 = 4; // SS4 goes hard
 
-// NOTE: how many times each photon pokes spacetime.
-// higher = more accuracy near the angry marble.
-const MAX_STEPS: u32 = 50_000; // 50k is a good default.
+/// NOTE: how many times each photon pokes spacetime.
+/// higher = more accuracy near the angry marble.
+const MAX_STEPS: u32 = 50_000; // NOTE: 50k is a good default.
 
-// NOTE: main render resolution.
-// bigger = prettier marble but slower.
-const W: u32 = 7680; // use 7680x4320 for good marble. iters getting squashed anyways :3
-const H: u32 = 4320; // use 3840x2160 for faster render
+/// NOTE:
+// main render resolution.
+/// bigger = prettier marble but slower.
+const W: u32 = 7680; // NOTE: use 7680x4320 for good marble. gpu gets bullied though :3
+const H: u32 = 4320; // NOTE: use 3840x2160 for faster render
 
-// WARNING:
-// HDR / EXR render resolution.
-// if you push this too high wgpu will start yelling about buffer sizes.
-const HDR_W: u32 = 3840;
-const HDR_H: u32 = 2160;
+/// NOTE:
+/// HDR / EXR render resolution.
+/// if you push this too high wgpu will start yelling about buffer sizes.
+const HDR_W: u32 = 3840; // WARN: DO NOT GO ABOVE 3840 or you anger the Pixel Budget Inspector :3
+const HDR_H: u32 = 2160; // WARN: DO NOT GO ABOVE 2160 or you anger the Pixel Budget Inspector :3
 
-// NOTE: donut pixels (grid of suffering)
-// this controls how detailed the accretion disk density field is.
-const DR: usize = 768; // 256x1024 for fast render
-const DA: usize = 3072; // 640x2560 for good sauce
-// or try 768x3072 idfk cosmic winds decide this i suppose.
+/// NOTE:
+/// donut pixels (grid of suffering)
+/// this controls how detailed the accretion disk density field is.
+const DR: usize = 768; // NOTE: 256x1024 for fast render
+const DA: usize = 3072; // NOTE: 640x2560 for good sauce
+// NOTE: or try 768x3072 idfk cosmic winds decide this i suppose.
 
-// WARNING:
+// NOTE:
 // end of actually important settings.
 // everything below here is mostly vibe tuning.
 
-// NOTE: black hole properties.
-const BH_MASS: f64 = 2.0; // 2.0 is "realistic"
-const BH_SIZE: f64 = 1.5; // radius of "no refunds, no witnesses"
-// put BH_MASS 2.5+ and BH_SIZE 1.0+ for more cinematic evil marble
+/// NOTE: black hole properties.
+/// NOTE: 2.0 is "realistic" don't trust me
+const BH_MASS: f64 = 2.0;
+/// NOTE: radius of nml aka don't pet the marble
+const BH_SIZE: f64 = 1.5;
+// NOTE: put BH_MASS 2.5+ and BH_SIZE 1.0+ for more cinematic evil marble
 
-// NOTE: cursed pasta ring bounds
-const DISK_IN: f64 = 1.2; // 1.2 looks nice, and is believable
-const DISK_OUT: f64 = 15.0; // 12.0 also looks believable
-const DISK_BOOST: f64 = 1.5; // cosmic speed limits. don't let beta be over 0.98 pls.
+/// NOTE: cursed pasta ring bounds
+/// NOTE: 1.2 looks nice, and is believable
+const DISK_IN: f64 = 1.2;
+/// NOTE: 12.0 also looks believable
+const DISK_OUT: f64 = 15.0;
+/// NOTE: cosmic speed limits. don't let beta be over 0.98 pls
+const DISK_BOOST: f64 = 1.5;
 
-// NOTE: disk appearance sliders
-// these were tuned until the disk stopped looking like wet lint.
-const DISK_HEAT: f64 = 18000.0; // glow spell intensity
-const ADISK_DENSITY_V: f64 = 3.2; // vertical squish curse
-const ADISK_DENSITY_H: f64 = 2.4; // horizontal fade chant
-const ADISK_HEIGHT: f64 = 0.014; // cosmic crepe thickness (must stay thin)
-const ADISK_LIT: f64 = 2.5; // "pls show up on screen" rune
-const ADISK_NOISE_SCALE: f64 = 2.2; // turbulence dial (fake trauma texture)
+/// NOTE:
+/// disk appearance sliders
+/// these were tuned until the disk stopped looking like wet lint.
+/// NOTE: glow spell intensity
+const DISK_HEAT: f64 = 18000.0;
+/// NOTE: vertical squish curse
+const ADISK_DENSITY_V: f64 = 3.2;
+/// NOTE: horizontal fade chant
+const ADISK_DENSITY_H: f64 = 2.4;
+/// NOTE: cosmic crepe thickness (must stay thin)
+const ADISK_HEIGHT: f64 = 0.014;
+/// NOTE: "pls show up on screen" rune
+const ADISK_LIT: f64 = 2.5;
+/// NOTE: turbulence dial (fake trauma texture)
+const ADISK_NOISE_SCALE: f64 = 2.2;
 
-// NOTE: camera placement
-// move this if you want to film the pasta ritual from another angle.
-const CAM_POS: DVec3 = DVec3::new(0.0, 0.55, -20.0); // 0.0, 2.2, -14.0 is my defaults
-const CAM_LOOK: DVec3 = DVec3::new(0.15, 0.03, 0.0); // 0.0, 0.0, 0.0 = looking directly at marble
-const CAM_ROLL: f64 = -10.0; // degrees
-const FOV: f64 = 65.0; // how far u watching the emo marble from
+/// NOTE:
+/// camera placement
+/// move this if you want to film the pasta ritual from another angle.
+/// NOTE: 0.0, 2.2, -14.0 is my defaults
+const CAM_POS: DVec3 = DVec3::new(0.0, 0.55, -20.0);
+/// NOTE: 0.0, 0.0, 0.0 = looking directly at marble
+const CAM_LOOK: DVec3 = DVec3::new(0.15, 0.03, 0.0);
+// NOTE: degrees how drunk the cameraman is
+const CAM_ROLL: f64 = -10.0;
+// NOTE: how far u watching the emo marble from
+const FOV: f64 = 65.0;
 
-// NOTE: preview brightness for PNG output
+/// NOTE:
+/// preview brightness for PNG output
 const EXPOSURE: f64 = 0.46; // when the void is too emo
 
-// HACK:
-// ray march helper knob.
-// currently doesn't do much unless stepping logic changes.
-const RING_ZONE: f64 = 1.0; // arbitrary numbers that barely does anything
+/// XXX:
+/// ray march helper knob.
+/// currently doesn't do much unless stepping logic changes.
+const RING_ZONE: f64 = 1.0; // XXX: arbitrary numbers that barely does anything
 
-// PERF:
-// number of particles in the disk simulation.
-// higher = smoother density field but slower CPU phase.
-const ROCKS: usize = 3_000_000; // honestly 8mil is fine... 3mil if want faster
+/// PERF:
+/// number of particles in the disk simulation.
+/// higher = smoother density field but slower CPU phase.
+const ROCKS: usize = 3_000_000; // NOTE: honestly 8mil is fine... 3mil if want faster
 
-// PERF:
-// how long the particle simulation runs.
-const STEPS: usize = 4_000; // 4k is pretty default. honestly no need to touch
+/// PERF:
+/// how long the particle simulation runs.
+const STEPS: usize = 4_000; // NOTE: 4k is pretty default. honestly no need to touch
 
-// WARNING:
-// simulation timestep.
-// small so the universe doesn't instantly file a complaint.
-// this magic number is calculated using orbital period
+/// NOTE:
+/// simulation timestep.
+/// small so the universe doesn't instantly file a complaint.
+/// this should roughly match comp_dt(), but is pinned here as a tuned constant.
+///
+/// XXX:
+/// this is manually pinned instead of using comp_dt() directly.
+/// future me can decide whether that was wisdom or pasta poisoning :3
 const DT: f64 = 0.0020;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -131,9 +163,9 @@ enum OutputFormat {
     All,
 }
 
-// WARNING:
-// output mode decides whether we go through the huge HDR path or the lighter LDR path.
-// if png accidentally starts using hdr again, render time and memory usage both get cursed.
+/// WARN:
+/// output mode decides whether we go through the huge HDR path or the lighter LDR path.
+/// if png accidentally starts using hdr again, render time and memory usage both get cursed.
 impl OutputFormat {
     fn needs_hdr(self) -> bool {
         matches!(
@@ -164,50 +196,87 @@ fn parse_output_format() -> OutputFormat {
     }
 }
 
-// small calculation to spew out me needed delta time
+/// HACK:
+/// estimates a usable Δt from one orbital period near the angry marble
+/// not sacred physics. just a cursed spacing for the sim steps
 fn comp_dt() -> f64 {
     let r = BH_SIZE;
     let m = BH_MASS;
+
+    // NOTE:
+    // orbital period from Kepler-ish relation:
+    // T = 2π * sqrt(r³ / M)
     let op = 2.0 * PI * ((r * r * r) / m).sqrt();
     op / STEPS as f64
 }
 
-// helper to tune angular velocity and spew out omega for me.
+/// INFO:
+/// calculates angular velocity Ω for a roughly circular orbit in the disk
+/// aka how fast the cosmic DVD logo spins around the void
 fn comp_omega() -> f64 {
     let r = (DISK_IN + DISK_OUT) * 0.5;
+
+    // Ω = sqrt(M / r³)
     ((BH_MASS / (r * r * r)).sqrt() * DISK_BOOST)
 }
 
-// helper to tune angle, and spews out phi for me.
+/// XXX:
+/// helper rune to spew out φ
+/// basically just π here. emotional support constant
 fn comp_phi() -> f64 {
     std::f64::consts::PI
 }
 
-// spew out my lambda
+/// XXX:
+/// calculates a fake average wavelength λ for RGB-ish suffering
+/// not deeply useful right now, just here for vibes
 fn comp_lambda() -> f64 {
     (700.0 + 532.0 + 435.0) / 3.0
 }
 
-// helper for velocity and spews out beta. less questionable
+/// INFO:
+/// calculates β = v/c for a typical disk orbit
+/// in this cursed unit system c = 1, so β is basically just the speed
+/// capped below 1 so relativity doesn't call the cops
 fn comp_beta() -> f64 {
     let r = (DISK_IN + DISK_OUT) * 0.5;
+
+    // circular orbit speed ≈ sqrt(M / r)
     ((BH_MASS / r).sqrt() * DISK_BOOST).min(0.999)
 }
 
-// helper for lorentz spewing out gamma radiation at me.
+/// INFO:
+/// calculates the Lorentz gamma factor from β
+/// this is the relativity tax that shows up in the WGSL voodoo later
 fn comp_gamma() -> f64 {
     let beta = comp_beta();
+
+    // γ = 1 / sqrt(1 - β²)
     1.0 / (1.0 - beta * beta).sqrt()
 }
 
+/// NOTE:
+/// filmic tone-mapping curve.
+/// compresses HDR brightness into something a normal monitor can survive.
 fn filmic(x: f32) -> f32 {
+    // NOTE:
+    // tiny offset removes near-black noise before the curve
     let x2 = (x - 0.004).max(0.0);
+
+    // HACK:
+    // these cursed constants approximate a filmic response curve.
+    // nobody remembers them, we just trust the cinema gods.
     (x2 * (6.2 * x2 + 0.5)) / (x2 * (6.2 * x2 + 1.7) + 0.06)
 }
 
-// WARNING:
-// this is the full tone-map path for png preview.
-// changing this affects the "final look" more than most disk sliders do.
+/// XXX:
+/// currently unused.
+/// cpu hdr -> png path from the old ritual.
+/// safe to delete unless the renderer goes back to cpu previews.
+///
+/// PERF:
+/// walks every pixel. fine for small previews.
+/// if you feed it a giant hdr buffer it will absolutely complain.
 fn hdr_to_u8_image(rgb: &[f32], w: u32, h: u32, exposure: f32) -> ImageBuffer<Rgb<u8>, Vec<u8>> {
     let mut img: ImageBuffer<Rgb<u8>, Vec<u8>> = ImageBuffer::new(w, h);
 
@@ -219,10 +288,14 @@ fn hdr_to_u8_image(rgb: &[f32], w: u32, h: u32, exposure: f32) -> ImageBuffer<Rg
             let mut g = rgb[i + 1] * exposure;
             let mut b = rgb[i + 2] * exposure;
 
+            // NOTE:
+            // squeeze the hdr a bit so filmic doesn't explode
             r = r / (1.0 + r * 1.3);
             g = g / (1.0 + g * 1.3);
             b = b / (1.0 + b * 1.3);
 
+            // NOTE:
+            // filmic tone-map then crush into 8-bit sadness
             let rr = (filmic(r).clamp(0.0, 1.0) * 255.0) as u8;
             let gg = (filmic(g).clamp(0.0, 1.0) * 255.0) as u8;
             let bb = (filmic(b).clamp(0.0, 1.0) * 255.0) as u8;
@@ -234,10 +307,10 @@ fn hdr_to_u8_image(rgb: &[f32], w: u32, h: u32, exposure: f32) -> ImageBuffer<Rg
     img
 }
 
-// NOTE:
-// tiff is intentionally not raw exr-style hdr.
-// this is a softer "light hdr squeeze" so the file keeps more highlight detail
-// without going full void goblin like exr does.
+/// NOTE:
+/// tiff is intentionally not raw exr-style hdr.
+/// this does a softer hdr squeeze so highlights survive
+/// without going full void goblin like exr does.
 fn hdr_to_u16_tiff_image(
     rgb: &[f32],
     w: u32,
@@ -254,11 +327,14 @@ fn hdr_to_u16_tiff_image(
             let mut g = rgb[i + 1] * exposure;
             let mut b = rgb[i + 2] * exposure;
 
-            // light hdr squeeze instead of full void strangling
+            // NOTE:
+            // gentle hdr squeeze before filmic
             r = r / (1.0 + r * 0.45);
             g = g / (1.0 + g * 0.45);
             b = b / (1.0 + b * 0.45);
 
+            // NOTE:
+            // tone-map then pack into 16-bit suffering
             let rr = (filmic(r).clamp(0.0, 1.0) * 65535.0) as u16;
             let gg = (filmic(g).clamp(0.0, 1.0) * 65535.0) as u16;
             let bb = (filmic(b).clamp(0.0, 1.0) * 65535.0) as u16;
@@ -270,9 +346,10 @@ fn hdr_to_u16_tiff_image(
     img
 }
 
-// PERF:
-// this box downscale is simple and safe, but not cheap.
-// huge hdr buffers will spend noticeable time here.
+/// PERF:
+/// dumb but reliable box downscale.
+/// walks a bunch of pixels and averages them.
+/// large hdr buffers will absolutely feel this.
 fn downscale_hdr_box(src: &[f32], sw: u32, sh: u32, dw: u32, dh: u32) -> Vec<f32> {
     let mut out = vec![0.0f32; (dw * dh * 3) as usize];
 
@@ -316,9 +393,9 @@ fn downscale_hdr_box(src: &[f32], sw: u32, sh: u32, dw: u32, dh: u32) -> Vec<f32
     out
 }
 
-// NOTE:
-// bloom is only applied to the ldr preview path right now.
-// exr stays raw, tiff stays softly squeezed, png gets the pretty lying filter.
+/// NOTE:
+/// bloom is only applied to the ldr preview path right now.
+/// exr stays raw, tiff stays softly squeezed, png gets the pretty lying filter.
 fn apply_bloom_u8(img: &mut ImageBuffer<Rgb<u8>, Vec<u8>>) {
     use image::imageops;
 
@@ -379,6 +456,9 @@ fn save_exr_from_f32(rgb: &[f32], w: u32, h: u32, path: &str) {
     println!("saved {}", path);
 }
 
+/// NOTE:
+/// main ritual:
+/// print cursed diagnostics -> simulate noodles -> bake field -> render chosen output path.
 fn main() {
     println!("Δt = {:.4}", comp_dt());
     println!("Ω = {:.4}", comp_omega());
@@ -399,9 +479,9 @@ fn main() {
     );
     let field = build_field(&idiots);
 
-    // WARNING:
+    // WARN:
     // png should stay on the ldr path.
-    // if this starts calling hdr render again, memory use goes nuclear for no reason.
+    // if this starts calling hdr again, memory use goes nuclear for no reason.
     if output_format.needs_ldr() {
         println!("gpu photon bullying ldr {}x{} ss={}...", W, H, SS);
         let rgb = pollster::block_on(render_wgpu_ldr(&field, W, H));
@@ -426,7 +506,7 @@ fn main() {
         }
     }
 
-    // WARNING:
+    // WARN:
     // hdr path is expensive and buffer-size sensitive.
     // keep HDR_W / HDR_H sane or wgpu will publicly humiliate you.
     if output_format.needs_hdr() {
@@ -474,6 +554,9 @@ struct Grain {
     alive: bool, // vibe check flag. false means it got eaten by the void.
 }
 
+/// NOTE:
+/// summon the accretion disk noodles.
+/// creates orbital grains in a cursed donut around the angry marble.
 fn make_the_donut(n: usize) -> Vec<Grain> {
     let mut rng = SmallRng::seed_from_u64(0xdead_beef_cafe_babe); // deterministic curse
     let mut out = Vec::with_capacity(n);
@@ -517,9 +600,16 @@ fn make_the_donut(n: usize) -> Vec<Grain> {
     out
 }
 
+/// NOTE:
+/// spin the noodle swarm around the angry marble.
+/// this is the main particle simulation step.
 fn let_the_idiots_spin(grains: &mut Vec<Grain>, steps: usize) {
     let report_every = steps / 10;
 
+    // PERF:
+    // this is the main cpu bully.
+    // millions of little shits times thousands of steps.
+    // no wonder tax evading is a thing.
     for step in 0..steps {
         if report_every > 0 && step % report_every == 0 {
             println!(
@@ -530,6 +620,7 @@ fn let_the_idiots_spin(grains: &mut Vec<Grain>, steps: usize) {
             );
         }
 
+        // PERF:
         // parallel chaos because cpu go brrrr
         grains.par_iter_mut().for_each(|g| {
             if !g.alive {
@@ -545,22 +636,29 @@ fn let_the_idiots_spin(grains: &mut Vec<Grain>, steps: usize) {
                 return;
             }
 
-            // gravity hex (i am not doing real GR, i’m summoning the vibe of it)
+            // FIXME:
+            // gravity hex (not real GR, just summoning the vibe of it)
+            // newtonian gravity with a spicy inner boost.
+            // a_vec = -(M / r^3) * r_vec
             let inv_r3 = 1.0 / (r2 * r);
 
+            // HACK:
+            // pseudo-GR correction
             // this term is literally "i whispered general relativity at newton"
-            // simplified newtonian gravity: a_vec = -(M / r^3) * r_vec
-            // then we spit GR at newton by boosting gravity with (1 + 3M/r)
             let grav = g.pos * (-BH_MASS * inv_r3 * (1.0 + 3.0 * BH_MASS / r));
 
+            // HACK:
             // tiny damping so noodles don't become confetti
+            // duct tape. not sacred astrophysics.
             let radial = g.pos / r;
             let goo = radial * (-g.vel.dot(radial) * 0.0003);
 
             // let gravity ruin everyone's day
             let a = grav + goo;
 
-            // euler is just cheap spellcasting
+            // FIXME:
+            // euler integrator is cheap spellcasting.
+            // leapfrog would behave better if the pasta ritual ever evolves.
             g.vel += a * DT;
             g.pos += g.vel * DT;
 
@@ -586,6 +684,9 @@ fn field_idx(ri: usize, ai: usize) -> usize {
     ri * DA + ai
 }
 
+/// NOTE:
+/// bake the surviving noodle swarm into the disk lookup field
+/// the shader later samples this thing to figure out where the sauce lives.
 fn build_field(grains: &[Grain]) -> DiskField {
     // density = how much cosmic pasta is packed here
     let mut density = vec![0.0_f64; DR * DA];
@@ -611,10 +712,13 @@ fn build_field(grains: &[Grain]) -> DiskField {
         let ang = g.pos.z.atan2(g.pos.x) + PI;
         let ai = (ang / (2.0 * PI) * DA as f64) as usize % DA;
 
+        // NOTE:
+        // local tangent direction so we can measure how hard the noodle is spinning
         let spin = DVec3::new(-g.pos.z / flat, 0.0, g.pos.x / flat);
         let vel = g.vel.dot(spin);
 
-        // distribute contribution to nearby cells
+        // NOTE:
+        // smear each grain into neighboring cells so the disk doesn't look like crunchy grid lasagna
         for dr in -1..=1 {
             for da in -1..=1 {
                 let rr = (ri as isize + dr).clamp(0, (DR - 1) as isize) as usize;
@@ -635,6 +739,8 @@ fn build_field(grains: &[Grain]) -> DiskField {
         }
     }
 
+    // NOTE:
+    // average the tangent speed per cell so one overcrowded pasta tile doesn't lie to the shader
     for i in 0..DR * DA {
         if counts[i] > 0.0 {
             vtan[i] /= counts[i] as f64;
@@ -652,8 +758,12 @@ fn build_field(grains: &[Grain]) -> DiskField {
     }
 }
 
+/// NOTE:
+/// blur the disk field a few times so the sauce stops looking like crunchy grid nonsense.
 fn blur_field(mut f: Vec<f64>) -> Vec<f64> {
-    // 0..4 ideal for faster render. 0..8 for smoother pasta
+    // PERF:
+    // cloning the whole field every pass is lazy but reliable.
+    // not the sexiest thing i've done, but it keeps the blur honest.
     for _ in 0..4 {
         let src = f.clone();
 
@@ -665,6 +775,8 @@ fn blur_field(mut f: Vec<f64>) -> Vec<f64> {
                 let ru = ri.saturating_sub(1);
                 let rd = (ri + 1).min(DR - 1);
 
+                // NOTE:
+                // simple cross blur with wraparound in angle and clamped radius
                 f[field_idx(ri, ai)] = (src[field_idx(ri, ai)] * 4.0
                     + src[field_idx(ri, l)]
                     + src[field_idx(ri, r)]
@@ -678,18 +790,16 @@ fn blur_field(mut f: Vec<f64>) -> Vec<f64> {
     f
 }
 
-// ── GPU renderer ──────────────────────────────────────────────────────────
-//
-// welcome to the photon torture chamber.
-// wgsl uniform layout is a drama queen.
-// align(16) so wgpu stops screaming at me.
-// i do not fully know what i'm doing.
-// if it breaks: spacetime did it.
-// if it works: also spacetime. i just held the spoon.
-
-// WARNING:
-// uniform layout must match wgsl Params exactly.
-// if this struct changes and shader struct does not, spacetime explodes immediately.
+/// welcome to the photon torture chamber.
+/// wgsl uniform layout is a drama queen.
+/// align(16) so wgpu stops screaming at me.
+/// i do not fully know what i'm doing.
+/// if it breaks: spacetime did it.
+/// if it works: also spacetime. i just held the spoon.
+///
+/// WARN:
+/// uniform layout must match wgsl Params exactly.
+/// if this struct changes and shader struct does not, spacetime explodes immediately.
 #[repr(C, align(16))]
 #[derive(Copy, Clone, Pod, Zeroable)]
 struct Params {
@@ -731,9 +841,12 @@ struct Params {
     _pad2a: f32,
 }
 
-// WARNING:
-// this helper builds the exact param blob shared by cpu + shader.
-// any mismatch here vs wgsl is instant gremlin behavior.
+/// WARN:
+/// this helper builds the exact param blob shared by cpu + shader.
+/// any mismatch here vs wgsl is instant gremlin behavior.
+/// literally...
+/// one wrong field, order, padding demon
+/// and the gpu starts hallucinating.
 fn make_params(render_w: u32, render_h: u32, field: &DiskField) -> Params {
     Params {
         w: render_w,
@@ -775,7 +888,12 @@ fn make_params(render_w: u32, render_h: u32, field: &DiskField) -> Params {
     }
 }
 
+/// NOTE:
+/// hdr gpu ritual.
+/// shoots photons on the gpu, then drags the float sauce back to cpu memory.
 async fn render_wgpu_hdr(field: &DiskField, render_w: u32, render_h: u32) -> Vec<f32> {
+    // TEST:
+    // sanity check uniform size while cpu/wgsl layout still haunted
     println!("Params size = {}", std::mem::size_of::<Params>());
 
     let instance = wgpu::Instance::default();
@@ -800,6 +918,9 @@ async fn render_wgpu_hdr(field: &DiskField, render_w: u32, render_h: u32) -> Vec
         .await
         .expect("no device (the void said no)");
 
+    // OPTIM:
+    // hdr and ldr both repack the same field junk.
+    // could share this setup if i stop committing renderer crimes.
     let mut packed = Vec::<f32>::with_capacity(DR * DA * 2);
     packed.extend_from_slice(&field.density);
     packed.extend_from_slice(&field.vtan);
@@ -819,10 +940,10 @@ async fn render_wgpu_hdr(field: &DiskField, render_w: u32, render_h: u32) -> Vec
     });
 
     let out_len = (render_w as usize) * (render_h as usize);
-    // WARNING:
-    // hdr output uses vec4<f32> per pixel.
-    // buffer size climbs insanely fast here.
-    // this is the main reason hdr is capped lower than png preview.
+
+    // WARN:
+    // hdr output is vec4<f32> per pixel.
+    // this buffer gets fat insanely fast.
     let out_bytes = (out_len * 16) as u64; // vec4<f32> per pixel
 
     let out_buf = device.create_buffer(&wgpu::BufferDescriptor {
@@ -928,6 +1049,9 @@ async fn render_wgpu_hdr(field: &DiskField, render_w: u32, render_h: u32) -> Vec
 
         cp.set_pipeline(&pipe);
         cp.set_bind_group(0, &bg, &[]);
+
+        // NOTE:
+        // launch one thread group per 16x16 chunk of pixel suffering
         println!("dispatching hdr compute shader...");
         cp.dispatch_workgroups(render_w.div_ceil(16), render_h.div_ceil(16), 1);
     }
@@ -938,6 +1062,9 @@ async fn render_wgpu_hdr(field: &DiskField, render_w: u32, render_h: u32) -> Vec
     let slice = readback.slice(..);
     let (tx, rx) = std::sync::mpsc::channel();
 
+    // WARN:
+    // if map_async / poll / unmap gets touched wrong,
+    // readback hangs or returns cursed garbage.
     slice.map_async(wgpu::MapMode::Read, move |r| {
         tx.send(r).unwrap();
     });
@@ -954,6 +1081,9 @@ async fn render_wgpu_hdr(field: &DiskField, render_w: u32, render_h: u32) -> Vec
 
     let f32s: &[f32] = bytemuck::cast_slice(&data);
 
+    // NOTE:
+    // shader writes vec4<f32>, but the cpu only cares about rgb.
+    // alpha gets thrown into the void.
     let mut rgb = vec![0.0f32; out_len * 3];
     for i in 0..out_len {
         let o = i * 4;
@@ -965,7 +1095,12 @@ async fn render_wgpu_hdr(field: &DiskField, render_w: u32, render_h: u32) -> Vec
     rgb
 }
 
+/// NOTE:
+/// ldr gpu ritual.
+/// same photon bullying as hdr, except this one comes back already packed for png suffering.
 async fn render_wgpu_ldr(field: &DiskField, render_w: u32, render_h: u32) -> Vec<u8> {
+    // TEST:
+    // sanity check uniform size while cpu/wgsl layout still haunted
     println!("Params size = {}", std::mem::size_of::<Params>());
 
     let instance = wgpu::Instance::default();
@@ -990,9 +1125,9 @@ async fn render_wgpu_ldr(field: &DiskField, render_w: u32, render_h: u32) -> Vec
         .await
         .expect("no device (the void said no)");
 
-    // PERF:
-    // field packing is cheap compared to the render, but still large.
-    // this happens every render pass, both ldr and hdr.
+    // OPTIM:
+    // hdr and ldr both repack the same field junk.
+    // could share this setup if i stop committing renderer crimes.
     let mut packed = Vec::<f32>::with_capacity(DR * DA * 2);
     packed.extend_from_slice(&field.density);
     packed.extend_from_slice(&field.vtan);
@@ -1117,6 +1252,9 @@ async fn render_wgpu_ldr(field: &DiskField, render_w: u32, render_h: u32) -> Vec
 
         cp.set_pipeline(&pipe);
         cp.set_bind_group(0, &bg, &[]);
+
+        // NOTE:
+        // launch one thread group per 16x16 tile of pixel suffering
         println!("dispatching ldr compute shader...");
         cp.dispatch_workgroups(render_w.div_ceil(16), render_h.div_ceil(16), 1);
     }
@@ -1127,9 +1265,9 @@ async fn render_wgpu_ldr(field: &DiskField, render_w: u32, render_h: u32) -> Vec
     let slice = readback.slice(..);
     let (tx, rx) = std::sync::mpsc::channel();
 
-    // WARNING:
-    // if map_async / poll / unmap flow gets touched wrong,
-    // readback either hangs or starts returning cursed garbage.
+    // WARN:
+    // if map_async / poll / unmap gets touched wrong,
+    // readback hangs or returns cursed garbage.
     slice.map_async(wgpu::MapMode::Read, move |r| {
         tx.send(r).unwrap();
     });
@@ -1144,6 +1282,9 @@ async fn render_wgpu_ldr(field: &DiskField, render_w: u32, render_h: u32) -> Vec
     let data = slice.get_mapped_range().to_vec();
     readback.unmap();
 
+    // NOTE:
+    // shader packed rgba8 into u32 lanes.
+    // cpu only keeps rgb and throws alpha into the void.
     let mut rgb = vec![0u8; out_len * 3];
     for i in 0..out_len {
         rgb[i * 3] = data[i * 4];
@@ -1154,13 +1295,15 @@ async fn render_wgpu_ldr(field: &DiskField, render_w: u32, render_h: u32) -> Vec
     rgb
 }
 
-// ── WGSL compute shader ───────────────────────────────────────────────────
-//
-// shader jail:
-// i absolutely do not fully understand half of this, i just know where it bites.
-// photons get bullied until they draw cosmic pasta vomit.
-// if a physicist sees this: no you didn't.
-
+/// shader jail:
+/// i do not fully understand all this.
+/// i just know where it bites.
+/// photons get bullied until they confess a picture.
+/// if a physicist sees this: no you didn't.
+///
+/// FIXME:
+/// hdr and ldr shaders are mostly the same cursed organism duplicated.
+/// one day i should stop committing this particular cauldron crime.
 const SHADER_HDR: &str = r#"
 struct Params {
   w: u32, h: u32, ss: u32, _pad0: u32,
@@ -1473,6 +1616,7 @@ for (var i: u32 = 0u; i < P.max_steps; i++) {
     let dist = length(pos);
 min_dist = min(min_dist, dist);
 
+    // old photon-rim residue
     if !rim_done && dist > prev_dist {
         let rim_center = P.bh_size * 1.03;
         let rim_width  = P.bh_size * 0.004;
@@ -1910,6 +2054,7 @@ for (var i: u32 = 0u; i < P.max_steps; i++) {
     let dist = length(pos);
 min_dist = min(min_dist, dist);
 
+    // old photon-rim experiment residue.
     if !rim_done && dist > prev_dist {
         let rim_center = P.bh_size * 1.03;
         let rim_width  = P.bh_size * 0.004;
