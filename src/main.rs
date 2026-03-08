@@ -75,29 +75,30 @@ const DA: usize = 3072; // 640x2560 for good sauce
 // everything below here is mostly vibe tuning.
 
 // NOTE: black hole properties.
-const BH_MASS: f64 = 2.6; // 2.0 is "realistic"
+const BH_MASS: f64 = 2.0; // 2.0 is "realistic"
 const BH_SIZE: f64 = 1.5; // radius of "no refunds, no witnesses"
 // put BH_MASS 2.5+ and BH_SIZE 1.0+ for more cinematic evil marble
 
 // NOTE: cursed pasta ring bounds
 const DISK_IN: f64 = 1.2; // 1.2 looks nice, and is believable
-const DISK_OUT: f64 = 12.0; // 12.0 also looks believable
+const DISK_OUT: f64 = 15.0; // 12.0 also looks believable
+const DISK_BOOST: f64 = 1.5; // cosmic speed limits. don't let beta be over 0.98 pls.
 
 // NOTE: disk appearance sliders
 // these were tuned until the disk stopped looking like wet lint.
-const DISK_HEAT: f64 = 20000.0; // glow spell intensity
-const ADISK_DENSITY_V: f64 = 5.0; // vertical squish curse
-const ADISK_DENSITY_H: f64 = 3.2; // horizontal fade chant
+const DISK_HEAT: f64 = 18000.0; // glow spell intensity
+const ADISK_DENSITY_V: f64 = 3.2; // vertical squish curse
+const ADISK_DENSITY_H: f64 = 2.4; // horizontal fade chant
 const ADISK_HEIGHT: f64 = 0.014; // cosmic crepe thickness (must stay thin)
-const ADISK_LIT: f64 = 0.46; // "pls show up on screen" rune
+const ADISK_LIT: f64 = 2.5; // "pls show up on screen" rune
 const ADISK_NOISE_SCALE: f64 = 2.2; // turbulence dial (fake trauma texture)
 
 // NOTE: camera placement
 // move this if you want to film the pasta ritual from another angle.
-const CAM_POS: DVec3 = DVec3::new(0.0, 1.2, -14.0); // 0.0, 2.2, -14.0 is my defaults
-const CAM_LOOK: DVec3 = DVec3::new(1.5, 1.5, 0.0); // 0.0, 0.0, 0.0 = looking directly at marble
-const CAM_ROLL: f64 = -8.0; // degrees
-const FOV: f64 = 70.0; // how far u watching the emo marble from
+const CAM_POS: DVec3 = DVec3::new(0.0, 0.55, -20.0); // 0.0, 2.2, -14.0 is my defaults
+const CAM_LOOK: DVec3 = DVec3::new(0.15, 0.03, 0.0); // 0.0, 0.0, 0.0 = looking directly at marble
+const CAM_ROLL: f64 = -10.0; // degrees
+const FOV: f64 = 65.0; // how far u watching the emo marble from
 
 // NOTE: preview brightness for PNG output
 const EXPOSURE: f64 = 0.46; // when the void is too emo
@@ -110,7 +111,7 @@ const RING_ZONE: f64 = 1.0; // arbitrary numbers that barely does anything
 // PERF:
 // number of particles in the disk simulation.
 // higher = smoother density field but slower CPU phase.
-const ROCKS: usize = 8_000_000; // honestly 8mil is fine... 3mil if want faster
+const ROCKS: usize = 3_000_000; // honestly 8mil is fine... 3mil if want faster
 
 // PERF:
 // how long the particle simulation runs.
@@ -119,7 +120,8 @@ const STEPS: usize = 4_000; // 4k is pretty default. honestly no need to touch
 // WARNING:
 // simulation timestep.
 // small so the universe doesn't instantly file a complaint.
-const DT: f64 = 0.0018;
+// this magic number is calculated using orbital period
+const DT: f64 = 0.0020;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum OutputFormat {
@@ -160,6 +162,42 @@ fn parse_output_format() -> OutputFormat {
     } else {
         OutputFormat::Png
     }
+}
+
+// small calculation to spew out me needed delta time
+fn comp_dt() -> f64 {
+    let r = BH_SIZE;
+    let m = BH_MASS;
+    let op = 2.0 * PI * ((r * r * r) / m).sqrt();
+    op / STEPS as f64
+}
+
+// helper to tune angular velocity and spew out omega for me.
+fn comp_omega() -> f64 {
+    let r = (DISK_IN + DISK_OUT) * 0.5;
+    ((BH_MASS / (r * r * r)).sqrt() * DISK_BOOST)
+}
+
+// helper to tune angle, and spews out phi for me.
+fn comp_phi() -> f64 {
+    std::f64::consts::PI
+}
+
+// spew out my lambda
+fn comp_lambda() -> f64 {
+    (700.0 + 532.0 + 435.0) / 3.0
+}
+
+// helper for velocity and spews out beta. less questionable
+fn comp_beta() -> f64 {
+    let r = (DISK_IN + DISK_OUT) * 0.5;
+    ((BH_MASS / r).sqrt() * DISK_BOOST).min(0.999)
+}
+
+// helper for lorentz spewing out gamma radiation at me.
+fn comp_gamma() -> f64 {
+    let beta = comp_beta();
+    1.0 / (1.0 - beta * beta).sqrt()
 }
 
 fn filmic(x: f32) -> f32 {
@@ -289,19 +327,19 @@ fn apply_bloom_u8(img: &mut ImageBuffer<Rgb<u8>, Vec<u8>>) {
     // extract bright pixels
     for p in bright.pixels_mut() {
         let v = (p[0] as f32 + p[1] as f32 + p[2] as f32) / 3.0;
-        if v < 215.0 {
+        if v < 185.0 {
             *p = image::Rgb([0, 0, 0]);
         }
     }
 
     // blur them
-    let glow = imageops::blur(&bright, 4.0);
+    let glow = imageops::blur(&bright, 7.0);
 
     // add glow back
     for (base, g) in img.pixels_mut().zip(glow.pixels()) {
-        base[0] = base[0].saturating_add((g[0] as f32 * 0.20) as u8);
-        base[1] = base[1].saturating_add((g[1] as f32 * 0.20) as u8);
-        base[2] = base[2].saturating_add((g[2] as f32 * 0.20) as u8);
+        base[0] = base[0].saturating_add((g[0] as f32 * 0.30) as u8);
+        base[1] = base[1].saturating_add((g[1] as f32 * 0.30) as u8);
+        base[2] = base[2].saturating_add((g[2] as f32 * 0.30) as u8);
     }
 }
 
@@ -342,6 +380,10 @@ fn save_exr_from_f32(rgb: &[f32], w: u32, h: u32, path: &str) {
 }
 
 fn main() {
+    println!("Δt = {:.4}", comp_dt());
+    println!("Ω = {:.4}", comp_omega());
+    println!("β = {:.4}", comp_beta());
+    println!("γ = {:.4}", comp_gamma());
     let output_format = parse_output_format();
     println!("output format: {:?}", output_format);
 
@@ -451,7 +493,9 @@ fn make_the_donut(n: usize) -> Vec<Grain> {
         let pos = DVec3::new(r * a.cos(), y, r * a.sin());
 
         // orbit speed (newton cosplay, don't tell einstein)
-        let v_circ = (BH_MASS / r).sqrt();
+        // circular orbit condition: v^2 / r = M / r^2
+        // solve for v -> v = sqrt(M / r)
+        let v_circ = (BH_MASS / r).sqrt() * DISK_BOOST;
 
         // wobble: inject chaos, as a treat
         let wobble = (rng.random::<f64>() - 0.5) * v_circ * 0.04;
@@ -505,6 +549,8 @@ fn let_the_idiots_spin(grains: &mut Vec<Grain>, steps: usize) {
             let inv_r3 = 1.0 / (r2 * r);
 
             // this term is literally "i whispered general relativity at newton"
+            // simplified newtonian gravity: a_vec = -(M / r^3) * r_vec
+            // then we spit GR at newton by boosting gravity with (1 + 3M/r)
             let grav = g.pos * (-BH_MASS * inv_r3 * (1.0 + 3.0 * BH_MASS / r));
 
             // tiny damping so noodles don't become confetti
@@ -514,7 +560,7 @@ fn let_the_idiots_spin(grains: &mut Vec<Grain>, steps: usize) {
             // let gravity ruin everyone's day
             let a = grav + goo;
 
-            // euler integration: cheap spellcasting
+            // euler is just cheap spellcasting
             g.vel += a * DT;
             g.pos += g.vel * DT;
 
@@ -1240,8 +1286,8 @@ fn planck_sample(wl: f32, temp: f32) -> f32 {
 fn planck_rgb(temp: f32) -> vec3<f32> {
   if temp < 100.0 { return vec3<f32>(0.0); }
   let r = planck_sample(700e-9, temp);
-  let g = planck_sample(546e-9, temp);
-  let b = planck_sample(435e-9, temp);
+  let g = planck_sample(532e-9, temp);
+  let b = planck_sample(460e-9, temp);
   let m = max(max(r,g), max(b,1e-30));
   return vec3<f32>(r/m, g/m, b/m);
 }
@@ -1312,6 +1358,10 @@ fn stars(dir: vec3<f32>) -> vec3<f32> {
 fn disk_color(pos: vec3<f32>, dir: vec3<f32>) -> vec3<f32> {
   let flat = sqrt(pos.x*pos.x + pos.z*pos.z);
 
+  if flat < P.bh_size * 1.03 {
+    return vec3<f32>(0.0);
+  }
+
   let h = pos.y / (flat * P.ad_height);
   let vert = exp(-h*h * P.ad_v);
   if vert < 0.001 { return vec3<f32>(0.0); }
@@ -1339,21 +1389,27 @@ fn disk_color(pos: vec3<f32>, dir: vec3<f32>) -> vec3<f32> {
     * pow(ratio, -0.75);
   if heat < 200.0 { return vec3<f32>(0.0); }
 
-  let spin = make_unit(vec3<f32>(-pos.z, 0.0, pos.x));
-  let to_cam = make_unit(dir);
-  let speed = min(abs(vtan), 0.72);
-  let beta = -dot(spin, to_cam) * sign(vtan) * speed;
-  let gamma = 1.0 / sqrt(max(1.0 - speed*speed, 0.001));
-  let dop = 1.0 / max(gamma*(1.0-beta), 0.01);
+let spin = make_unit(vec3<f32>(-pos.z, 0.0, pos.x));
+let to_cam = make_unit(dir);
+let speed = min(abs(vtan), 0.82);
+let beta = -dot(spin, to_cam) * sign(vtan) * speed;
+let gamma = 1.0 / sqrt(max(1.0 - speed * speed, 0.001));
+let dop = 1.0 / max(gamma * (1.0 - beta), 0.01);
 
-  var red_boost = 1.0;
-  if dop < 1.0 {
-    red_boost = 1.0 + clamp((1.0 - dop) * 0.8, 0.0, 0.55);
-  }
+// use a softer doppler for color so the far side stays warm instead of dying
+let color_dop = dop;
 
-  let beam = min(pow(dop, 2.8), 2.6);
-  let grav = pow(max(1.0 - P.bh_size/flat, 0.01), 0.35);
-  let seen = heat * dop * grav;
+// much softer brightness asymmetry
+let beam = pow(dop, 1.15);
+
+// let the red side keep some life
+var red_boost = 1.0;
+if dop < 1.0 {
+  red_boost = 1.0 + clamp((1.0 - dop) * 2.4, 0.0, 1.6);
+}
+
+let grav = pow(max(1.0 - P.bh_size / flat, 0.01), 0.10);
+let seen = heat * color_dop * grav;
 
   let disk_normal = vec3<f32>(0.0, 1.0, 0.0);
   let view_angle = abs(dot(disk_normal, dir));
@@ -1367,10 +1423,9 @@ fn disk_color(pos: vec3<f32>, dir: vec3<f32>) -> vec3<f32> {
     * red_boost
     * limb;
 
-  let ring_soft = smoothstep(P.bh_size * 1.04, P.bh_size * 1.34, flat);
-  bright *= ring_soft;
-
-  return planck_rgb(seen) * bright;
+let ring_soft = smoothstep(P.bh_size * 1.010, P.bh_size * 1.028, flat);
+bright *= ring_soft;
+return planck_rgb(seen) * bright;
 }
 
 fn make_camera_ray(px: f32, py: f32) -> vec3<f32> {
@@ -1403,21 +1458,55 @@ fn march(px: u32, py: u32, sx: u32, sy: u32) -> vec3<f32> {
   let fx = f32(px) + (f32(sx) + j.x) / f32(P.ss);
   let fy = f32(py) + (f32(sy) + j.y) / f32(P.ss);
 
-  var pos = P.cam_pos.xyz;
-  var dir = make_camera_ray(fx, fy);
-  var col = vec3<f32>(0.0);
-  var swirl = 0.0;
+var pos = P.cam_pos.xyz;
+var dir = make_camera_ray(fx, fy);
+var col = vec3<f32>(0.0);
+var swirl = 0.0;
 
-  for (var i: u32 = 0u; i < P.max_steps; i++) {
+var min_dist = 1e9;
+var prev_dist = 1e9;
+var rim_done = false;
+var prev_y = pos.y;
+var plane_hits: u32 = 0u;
+
+for (var i: u32 = 0u; i < P.max_steps; i++) {
     let dist = length(pos);
+min_dist = min(min_dist, dist);
 
-    if dist < P.bh_size * 0.97 {
-      return col;
+    if !rim_done && dist > prev_dist {
+        let rim_center = P.bh_size * 1.03;
+        let rim_width  = P.bh_size * 0.004;
+
+        let rim_dist = abs(prev_dist - rim_center);
+        let rim = smoothstep(rim_width, 0.0, rim_dist);
+
+        let rim_view = pow(1.0 - abs(dir.y), 3.5);
+
+        rim_done = true;
     }
 
-    if dist > 120.0 {
-      return col + stars(dir);
+    prev_dist = min(prev_dist, dist);
+    if dist < P.bh_size {
+        return col;
     }
+
+if dist > 120.0 {
+
+    let swirl_ring =
+        exp(-pow((swirl - 3.35) / 0.09, 2.0));
+
+    let ring_view = pow(1.0 - abs(dir.y), 2.6);
+
+    let ring_gate =
+        1.0 - smoothstep(P.bh_size * 1.00, P.bh_size * 1.018, min_dist);
+
+    let photon_ring =
+        vec3<f32>(1.0, 0.99, 0.96) * swirl_ring * ring_view * ring_gate * 0.42;
+
+    col = max(col, photon_ring);
+
+    return col + stars(dir);
+}
 
     let flat = sqrt(pos.x*pos.x + pos.z*pos.z);
 
@@ -1425,15 +1514,15 @@ fn march(px: u32, py: u32, sx: u32, sy: u32) -> vec3<f32> {
     step = min(step, max(0.00012, (dist - P.bh_size) * 0.02));
 
     if flat > P.disk_in - 1.0 && flat < P.disk_out + 1.0 {
-      let disk_half = max(flat * P.ad_height * 2.8, 0.02);
-      let plane_dist = abs(pos.y);
+        let disk_half = max(flat * P.ad_height * 2.8, 0.02);
+        let plane_dist = abs(pos.y);
 
-      let plane_factor = clamp(plane_dist / (disk_half * 3.0), 0.15, 1.0);
-      step *= plane_factor;
+        let plane_factor = clamp(plane_dist / (disk_half * 3.0), 0.15, 1.0);
+        step *= plane_factor;
 
-      let inner_dist = abs(flat - P.disk_in);
-      let ring_factor = clamp(inner_dist * 3.0, 0.18, 1.0);
-      step *= ring_factor;
+        let inner_dist = abs(flat - P.disk_in);
+        let ring_factor = clamp(inner_dist * 3.0, 0.18, 1.0);
+        step *= ring_factor;
     }
 
     let bend_scale = 1.5 * P.bh_size / max(dist * dist, 0.0001);
@@ -1442,16 +1531,53 @@ fn march(px: u32, py: u32, sx: u32, sy: u32) -> vec3<f32> {
 
     let grav_dir = -pos / dist;
     let bend = P.bh_mass / (dist * dist);
-    dir = make_unit(dir + grav_dir * bend * step); 
+    dir = make_unit(dir + grav_dir * bend * step);
     swirl += bend * step;
 
-    if flat > P.disk_in && flat < P.disk_out {
-    col = min(col + disk_color(pos, dir) * 1.4, vec3<f32>(10.0));
+let next_pos = pos + dir * step;
+let next_flat = length(next_pos.xz);
+
+if next_flat > P.disk_in && next_flat < P.disk_out {
+    let crossed_plane =
+        (prev_y <= 0.0 && next_pos.y > 0.0) ||
+        (prev_y >= 0.0 && next_pos.y < 0.0);
+
+    if crossed_plane {
+        let t = clamp(prev_y / (prev_y - next_pos.y), 0.0, 1.0);
+        let hit = pos + (next_pos - pos) * t;
+        let hit_flat = length(hit.xz);
+
+        if hit_flat > P.disk_in && hit_flat < P.disk_out {
+            plane_hits += 1u;
+
+let caustic_center = P.disk_in * 1.03;
+let caustic_width = P.disk_in * 0.10;
+let caustic =
+    1.0 + 2.2 * exp(-pow((hit_flat - caustic_center) / caustic_width, 2.0));
+
+let photon_ring_zone =
+    1.0 + 1.8 * exp(-pow((min_dist - P.bh_size * 1.035) / (P.bh_size * 0.06), 2.0));
+
+let echo = select(1.0, 1.35, plane_hits >= 2u);
+let thin = 1.0 / max(abs(next_pos.y - prev_y), 0.020);
+
+let inner_block = smoothstep(P.bh_size * 1.03, P.bh_size * 1.07, hit_flat);
+
+col = min(
+    col + disk_color(hit, dir) * step * 3.2 * caustic * photon_ring_zone * echo * thin * inner_block,
+    vec3<f32>(6.0)
+);        }
     }
 
-    pos += dir * step;
-  }
+    let disk_half = max(next_flat * P.ad_height, 0.003);
+if abs(next_pos.y) < disk_half * 0.55 {
+    col = min(col + disk_color(next_pos, dir) * step * 1.6, vec3<f32>(6.0));
+}
+}
 
+pos = next_pos;
+prev_y = next_pos.y;
+}
   return col;
 }
 
@@ -1596,8 +1722,8 @@ fn planck_sample(wl: f32, temp: f32) -> f32 {
 fn planck_rgb(temp: f32) -> vec3<f32> {
   if temp < 100.0 { return vec3<f32>(0.0); }
   let r = planck_sample(700e-9, temp);
-  let g = planck_sample(546e-9, temp);
-  let b = planck_sample(435e-9, temp);
+  let g = planck_sample(532e-9, temp);
+  let b = planck_sample(460e-9, temp);
   let m = max(max(r,g), max(b,1e-30));
   return vec3<f32>(r/m, g/m, b/m);
 }
@@ -1668,6 +1794,10 @@ fn stars(dir: vec3<f32>) -> vec3<f32> {
 fn disk_color(pos: vec3<f32>, dir: vec3<f32>) -> vec3<f32> {
   let flat = sqrt(pos.x*pos.x + pos.z*pos.z);
 
+  if flat < P.bh_size * 1.03 {
+    return vec3<f32>(0.0);
+  }
+
   let h = pos.y / (flat * P.ad_height);
   let vert = exp(-h*h * P.ad_v);
   if vert < 0.001 { return vec3<f32>(0.0); }
@@ -1695,21 +1825,27 @@ fn disk_color(pos: vec3<f32>, dir: vec3<f32>) -> vec3<f32> {
     * pow(ratio, -0.75);
   if heat < 200.0 { return vec3<f32>(0.0); }
 
-  let spin = make_unit(vec3<f32>(-pos.z, 0.0, pos.x));
-  let to_cam = make_unit(dir);
-  let speed = min(abs(vtan), 0.72);
-  let beta = -dot(spin, to_cam) * sign(vtan) * speed;
-  let gamma = 1.0 / sqrt(max(1.0 - speed*speed, 0.001));
-  let dop = 1.0 / max(gamma*(1.0-beta), 0.01);
+let spin = make_unit(vec3<f32>(-pos.z, 0.0, pos.x));
+let to_cam = make_unit(dir);
+let speed = min(abs(vtan), 0.82);
+let beta = -dot(spin, to_cam) * sign(vtan) * speed;
+let gamma = 1.0 / sqrt(max(1.0 - speed * speed, 0.001));
+let dop = 1.0 / max(gamma * (1.0 - beta), 0.01);
 
-  var red_boost = 1.0;
-  if dop < 1.0 {
-    red_boost = 1.0 + clamp((1.0 - dop) * 0.8, 0.0, 0.55);
-  }
+// use a softer doppler for color so the far side stays warm instead of dying
+let color_dop = dop;
 
-  let beam = min(pow(dop, 2.8), 2.6);
-  let grav = pow(max(1.0 - P.bh_size/flat, 0.01), 0.35);
-  let seen = heat * dop * grav;
+// much softer brightness asymmetry
+let beam = pow(dop, 1.15);
+
+// let the red side keep some life
+var red_boost = 1.0;
+if dop < 1.0 {
+  red_boost = 1.0 + clamp((1.0 - dop) * 2.4, 0.0, 1.6);
+}
+
+let grav = pow(max(1.0 - P.bh_size / flat, 0.01), 0.10);
+let seen = heat * color_dop * grav;
 
   let disk_normal = vec3<f32>(0.0, 1.0, 0.0);
   let view_angle = abs(dot(disk_normal, dir));
@@ -1723,10 +1859,9 @@ fn disk_color(pos: vec3<f32>, dir: vec3<f32>) -> vec3<f32> {
     * red_boost
     * limb;
 
-  let ring_soft = smoothstep(P.bh_size * 1.04, P.bh_size * 1.34, flat);
-  bright *= ring_soft;
-
-  return planck_rgb(seen) * bright;
+let ring_soft = smoothstep(P.bh_size * 1.010, P.bh_size * 1.028, flat);
+bright *= ring_soft;
+return planck_rgb(seen) * bright;
 }
 
 fn make_camera_ray(px: f32, py: f32) -> vec3<f32> {
@@ -1760,21 +1895,55 @@ fn march(px: u32, py: u32, sx: u32, sy: u32) -> vec3<f32> {
   let fx = f32(px) + (f32(sx) + j.x) / f32(P.ss);
   let fy = f32(py) + (f32(sy) + j.y) / f32(P.ss);
 
-  var pos = P.cam_pos.xyz;
-  var dir = make_camera_ray(fx, fy);
-  var col = vec3<f32>(0.0);
-  var swirl = 0.0;
+var pos = P.cam_pos.xyz;
+var dir = make_camera_ray(fx, fy);
+var col = vec3<f32>(0.0);
+var swirl = 0.0;
 
-  for (var i: u32 = 0u; i < P.max_steps; i++) {
+var min_dist = 1e9;
+var prev_dist = 1e9;
+var rim_done = false;
+var prev_y = pos.y;
+var plane_hits: u32 = 0u;
+
+for (var i: u32 = 0u; i < P.max_steps; i++) {
     let dist = length(pos);
+min_dist = min(min_dist, dist);
 
-    if dist < P.bh_size * 0.97 {
-      return col;
+    if !rim_done && dist > prev_dist {
+        let rim_center = P.bh_size * 1.03;
+        let rim_width  = P.bh_size * 0.004;
+
+        let rim_dist = abs(prev_dist - rim_center);
+        let rim = smoothstep(rim_width, 0.0, rim_dist);
+
+        let rim_view = pow(1.0 - abs(dir.y), 3.5);
+
+        rim_done = true;
     }
 
-    if dist > 120.0 {
-      return col + stars(dir);
+    prev_dist = min(prev_dist, dist);
+    if dist < P.bh_size {
+        return col;
     }
+
+if dist > 120.0 {
+
+    let swirl_ring =
+        exp(-pow((swirl - 3.35) / 0.09, 2.0));
+
+    let ring_view = pow(1.0 - abs(dir.y), 2.6);
+
+    let ring_gate =
+        1.0 - smoothstep(P.bh_size * 1.00, P.bh_size * 1.018, min_dist);
+
+    let photon_ring =
+        vec3<f32>(1.0, 0.99, 0.96) * swirl_ring * ring_view * ring_gate * 0.42;
+
+    col = max(col, photon_ring);
+
+    return col + stars(dir);
+}
 
     let flat = sqrt(pos.x*pos.x + pos.z*pos.z);
 
@@ -1782,15 +1951,15 @@ fn march(px: u32, py: u32, sx: u32, sy: u32) -> vec3<f32> {
     step = min(step, max(0.00012, (dist - P.bh_size) * 0.02));
 
     if flat > P.disk_in - 1.0 && flat < P.disk_out + 1.0 {
-      let disk_half = max(flat * P.ad_height * 2.8, 0.02);
-      let plane_dist = abs(pos.y);
+        let disk_half = max(flat * P.ad_height * 2.8, 0.02);
+        let plane_dist = abs(pos.y);
 
-      let plane_factor = clamp(plane_dist / (disk_half * 3.0), 0.15, 1.0);
-      step *= plane_factor;
+        let plane_factor = clamp(plane_dist / (disk_half * 3.0), 0.15, 1.0);
+        step *= plane_factor;
 
-      let inner_dist = abs(flat - P.disk_in);
-      let ring_factor = clamp(inner_dist * 3.0, 0.18, 1.0);
-      step *= ring_factor;
+        let inner_dist = abs(flat - P.disk_in);
+        let ring_factor = clamp(inner_dist * 3.0, 0.18, 1.0);
+        step *= ring_factor;
     }
 
     let bend_scale = 1.5 * P.bh_size / max(dist * dist, 0.0001);
@@ -1802,12 +1971,50 @@ fn march(px: u32, py: u32, sx: u32, sy: u32) -> vec3<f32> {
     dir = make_unit(dir + grav_dir * bend * step);
     swirl += bend * step;
 
-    if flat > P.disk_in && flat < P.disk_out {
-      col = min(col + disk_color(pos, dir), vec3<f32>(10.0));
+let next_pos = pos + dir * step;
+let next_flat = length(next_pos.xz);
+
+if next_flat > P.disk_in && next_flat < P.disk_out {
+    let crossed_plane =
+        (prev_y <= 0.0 && next_pos.y > 0.0) ||
+        (prev_y >= 0.0 && next_pos.y < 0.0);
+
+    if crossed_plane {
+        let t = clamp(prev_y / (prev_y - next_pos.y), 0.0, 1.0);
+        let hit = pos + (next_pos - pos) * t;
+        let hit_flat = length(hit.xz);
+
+        if hit_flat > P.disk_in && hit_flat < P.disk_out {
+            plane_hits += 1u;
+
+let caustic_center = P.disk_in * 1.03;
+let caustic_width = P.disk_in * 0.10;
+let caustic =
+    1.0 + 2.2 * exp(-pow((hit_flat - caustic_center) / caustic_width, 2.0));
+
+let photon_ring_zone =
+    1.0 + 1.8 * exp(-pow((min_dist - P.bh_size * 1.035) / (P.bh_size * 0.06), 2.0));
+
+let echo = select(1.0, 1.35, plane_hits >= 2u);
+let thin = 1.0 / max(abs(next_pos.y - prev_y), 0.020);
+
+let inner_block = smoothstep(P.bh_size * 1.03, P.bh_size * 1.07, hit_flat);
+
+col = min(
+    col + disk_color(hit, dir) * step * 3.2 * caustic * photon_ring_zone * echo * thin * inner_block,
+    vec3<f32>(6.0)
+);        }
     }
 
-    pos += dir * step;
-  }
+    let disk_half = max(next_flat * P.ad_height, 0.003);
+if abs(next_pos.y) < disk_half * 0.55 {
+    col = min(col + disk_color(next_pos, dir) * step * 1.6, vec3<f32>(6.0));
+}
+}
+
+pos = next_pos;
+prev_y = next_pos.y;
+}
 
   return col;
 }
