@@ -1,3 +1,8 @@
+// NOTE:
+// i'm not commenting this. it's basically same as HDR shader
+// go read that demonic scroll if you are interested.
+// this demon scroll shouldn't even exist.
+// someday i'll end up in cosmic court for having two scrolls
 struct Params {
     w: u32,
     h: u32,
@@ -54,7 +59,7 @@ fn rand2(x: f32, y: f32) -> vec2<f32> {
 
 fn hash3(p: vec3<f32>) -> f32 {
     var q = fract(p * vec3<f32>(127.1, 311.7, 74.7));
-    q       += dot(q, q.yzx + 19.19);
+    q += dot(q, q.yzx + 19.19);
     return fract((q.x + q.y) * q.z);
 }
 
@@ -75,8 +80,8 @@ fn fbm(x: f32, y: f32) -> f32 {
     var v = 0.0; var a = 0.5;
     var xx = x; var yy = y;
     for (var i = 0; i < 3; i++) {
-        v       += a * noise2(xx, yy);
-        xx       *= 2.1; yy       *= 2.1; a       *= 0.5;
+        v += a * noise2(xx, yy);
+        xx *= 2.1; yy   *= 2.1; a   *= 0.5;
     }
     return v;
 }
@@ -176,13 +181,13 @@ fn stars(dir: vec3<f32>) -> vec3<f32> {
     let d = make_unit(dir);
     var col = vec3<f32>(0.0);
 
-    col       += star_layer(d, 180.0, 0.975, 0.12);
-    col       += star_layer(d, 260.0, 0.982, 0.18);
+    col = star_layer(d, 180.0, 0.975, 0.12);
+    col += star_layer(d, 260.0, 0.982, 0.18);
 
-    col       += star_layer(d, 420.0, 0.993, 0.65);
-    col       += star_layer(d, 700.0, 0.9975, 1.45);
+    col += star_layer(d, 420.0, 0.993, 0.65);
+    col += star_layer(d, 700.0, 0.9975, 1.45);
 
-    col       += star_layer(d, 1100.0, 0.9990, 2.80);
+    col += star_layer(d, 1100.0, 0.9990, 2.80);
 
     let lat = asin(clamp(d.y, -1.0, 1.0));
     let lon = atan2(d.z, d.x);
@@ -190,7 +195,7 @@ fn stars(dir: vec3<f32>) -> vec3<f32> {
     let dust_noise = 0.5 * noise2(lon * 2.0, lat * 6.0) + 0.5 * noise2(lon * 6.0, lat * 14.0);
 
     let dust = 0.004 + 0.004 * dust_noise;
-    col       += vec3<f32>(dust * 0.55, dust * 0.60, dust * 0.78);
+    col += vec3<f32>(dust * 0.55, dust * 0.60, dust * 0.78);
 
     let band_noise = 0.6 * noise2(lon * 3.0, lat * 8.0) + 0.4 * noise2(lon * 7.0, lat * 17.0);
 
@@ -198,7 +203,7 @@ fn stars(dir: vec3<f32>) -> vec3<f32> {
     let band_ripple = 0.85 + 0.24 * sin(lon * 2.6 - 1.1) + 0.11 * sin(lon * 5.8 + 0.4) + 0.05 * sin(lon * 11.0 - 0.7);
 
     let band = band_shape * (0.010 + 0.010 * band_noise) * band_ripple;
-    col       += vec3<f32>(band * 0.55, band * 0.60, band * 0.85);
+    col += vec3<f32>(band * 0.55, band * 0.60, band * 0.85);
 
     return col;
 }
@@ -264,7 +269,7 @@ fn disk_color(pos: vec3<f32>, dir: vec3<f32>) -> vec3<f32> {
     var bright = density * pow(clamp(seen / P.disk_heat, 0.0, 1.2), 1.1) * beam * P.ad_lit * red_boost * limb;
 
     let ring_soft = smoothstep(P.bh_size * 1.010, P.bh_size * 1.028, flat);
-    bright       *= ring_soft;
+    bright *= ring_soft;
     return planck_rgb(seen) * bright;
 }
 
@@ -357,21 +362,21 @@ fn march(px: u32, py: u32, sx: u32, sy: u32) -> vec3<f32> {
             let plane_dist = abs(pos.y);
 
             let plane_factor = clamp(plane_dist / (disk_half * 3.0), 0.15, 1.0);
-            step       *= plane_factor;
+            step *= plane_factor;
 
             let inner_dist = abs(flat - P.disk_in);
             let ring_factor = clamp(inner_dist * 3.0, 0.18, 1.0);
-            step       *= ring_factor;
+            step *= ring_factor;
         }
 
         let bend_scale = 1.5 * P.bh_size / max(dist * dist, 0.0001);
-        step       *= clamp(1.0 / (1.0 + bend_scale * 40.0), 0.12, 1.0);
+        step *= clamp(1.0 / (1.0 + bend_scale * 40.0), 0.12, 1.0);
         step = clamp(step, 0.00003, 0.03);
 
         let grav_dir = -pos / dist;
         let bend = P.bh_mass / (dist * dist);
         dir = make_unit(dir + grav_dir * bend * step);
-        swirl       += bend * step;
+        swirl += bend * step;
 
         let next_pos = pos + dir * step;
         let next_flat = length(next_pos.xz);
@@ -385,7 +390,7 @@ fn march(px: u32, py: u32, sx: u32, sy: u32) -> vec3<f32> {
                 let hit_flat = length(hit.xz);
 
                 if hit_flat > P.disk_in && hit_flat < P.disk_out {
-                    plane_hits       += 1u;
+                    plane_hits += 1u;
 
                     let caustic_center = P.disk_in * 1.03;
                     let caustic_width = P.disk_in * 0.10;
@@ -425,7 +430,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     var acc = vec3<f32>(0.0);
     for (var sy: u32 = 0u; sy < P.ss; sy++) {
         for (var sx: u32 = 0u; sx < P.ss; sx++) {
-            acc       += march(gid.x, gid.y, sx, sy);
+            acc += march(gid.x, gid.y, sx, sy);
         }
     }
 
