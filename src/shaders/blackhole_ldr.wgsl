@@ -57,6 +57,11 @@ fn rand2(x: f32, y: f32) -> vec2<f32> {
     return vec2<f32>(a, b);
 }
 
+// XXX:
+// tiny hash for procedural star nonsense.
+// statistically suspicious, visually acceptable.
+// based on shader hash folklore, including David Hoskins-style "Hash without Sine" tricks.
+// the shader folklore archive claims responsibility.
 fn hash3(p: vec3<f32>) -> f32 {
     var q = fract(p * vec3<f32>(127.1, 311.7, 74.7));
     q += dot(q, q.yzx + 19.19);

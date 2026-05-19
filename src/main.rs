@@ -76,8 +76,8 @@ const HDR_H: u32 = 2160; // WARN: DO NOT GO ABOVE 2160 or you anger the Pixel Bu
 /// NOTE:
 /// donut pixels (grid of suffering)
 /// this controls how detailed the accretion disk density field is.
-const DR: usize = 768; // NOTE: 256x1024 for fast render
-const DA: usize = 3072; // NOTE: 640x2560 for good sauce
+const DR: usize = 1024; // NOTE: 256x1024 for fast render
+const DA: usize = 4096; // NOTE: 640x2560 for good sauce
 // NOTE: or try 768x3072 idfk cosmic winds decide this i suppose.
 
 // NOTE:
@@ -87,15 +87,15 @@ const DA: usize = 3072; // NOTE: 640x2560 for good sauce
 /// NOTE: black hole properties.
 /// NOTE: 2.0 is "realistic" don't trust me
 const BH_MASS: f64 = 2.0;
-/// NOTE: radius of nml aka don't pet the marble
-const BH_SIZE: f64 = 1.5;
+/// NOTE: radius of nml aka don't pet the marble. 2.05 ideal for 2.0 mass
+const BH_SIZE: f64 = 2.05;
 // NOTE: put BH_MASS 2.5+ and BH_SIZE 1.0+ for more cinematic evil marble
 
 /// NOTE: cursed pasta ring bounds
-/// NOTE: 1.2 looks nice, and is believable
-const DISK_IN: f64 = 1.2;
+/// NOTE: 3.6 looks nice, and is believable
+const DISK_IN: f64 = 3.6;
 /// NOTE: 12.0 also looks believable
-const DISK_OUT: f64 = 15.0;
+const DISK_OUT: f64 = 14.0;
 /// NOTE: cosmic speed limits. don't let beta be over 0.98 pls
 const DISK_BOOST: f64 = 1.5;
 
@@ -103,7 +103,7 @@ const DISK_BOOST: f64 = 1.5;
 /// disk appearance sliders
 /// these were tuned until the disk stopped looking like wet lint.
 /// NOTE: glow spell intensity
-const DISK_HEAT: f64 = 18000.0;
+const DISK_HEAT: f64 = 8000.0;
 /// NOTE: vertical squish curse
 const ADISK_DENSITY_V: f64 = 3.2;
 /// NOTE: horizontal fade chant
@@ -139,7 +139,7 @@ const RING_ZONE: f64 = 1.0; // XXX: arbitrary numbers that barely does anything
 /// PERF:
 /// number of particles in the disk simulation.
 /// higher = smoother density field but slower CPU phase.
-const ROCKS: usize = 3_000_000; // NOTE: honestly 8mil is fine... 3mil if want faster
+const ROCKS: usize = 8_000_000; // NOTE: honestly 8mil is fine... 3mil if want faster
 
 /// PERF:
 /// how long the particle simulation runs.
@@ -153,7 +153,7 @@ const STEPS: usize = 4_000; // NOTE: 4k is pretty default. honestly no need to t
 /// XXX:
 /// this is manually pinned instead of using comp_dt() directly.
 /// future me can decide whether that was wisdom or pasta poisoning :3
-const DT: f64 = 0.0020;
+const DT: f64 = 0.0018;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum OutputFormat {
@@ -764,7 +764,7 @@ fn blur_field(mut f: Vec<f64>) -> Vec<f64> {
     // PERF:
     // cloning the whole field every pass is lazy but reliable.
     // not the sexiest thing i've done, but it keeps the blur honest.
-    for _ in 0..4 {
+    for _ in 0..8 {
         let src = f.clone();
 
         for ri in 0..DR {

@@ -48,8 +48,10 @@ fn make_unit(v: vec3<f32>) -> vec3<f32> {
 }
 
 // NOTE:
-// filmic tone-map curve.
-// compresses HDR brightness into something a mortal monitor can survive.
+// filmic tone-mapping procedure.
+// the Hejl–Burgess-Dawson brightness compression ritual,
+// documented by John Hable for the wider shader bureaucracy.
+// converts irresponsible HDR light into something a mortal monitor can survive.
 fn filmic(x: f32) -> f32 {
     let x2 = max(x - 0.004, 0.0);
     return (x2 * (6.2 * x2 + 0.5)) / (x2 * (6.2 * x2 + 1.7) + 0.06);
@@ -57,8 +59,8 @@ fn filmic(x: f32) -> f32 {
 
 // XXX:
 // cheap deterministic 2D jitter.
-// not sacred randomness, just enough to stop the pixels from looking crunchy.
-// absolutely the kind of thing everyone yoinks instead of writing proudly
+// not real randomness, just enough to stop the image from looking crunchy.
+// assembled from the usual cursed shader constants everyone has stolen at least once.
 fn rand2(x: f32, y: f32) -> vec2<f32> {
     let a = fract(sin(x * 127.1 + y * 311.7) * 43758.5453);
     let b = fract(sin(x * 269.5 + y * 183.3) * 43758.5453);
@@ -68,7 +70,8 @@ fn rand2(x: f32, y: f32) -> vec2<f32> {
 // XXX:
 // tiny hash for procedural star nonsense.
 // statistically suspicious, visually acceptable.
-// we can thank LLM for this shit
+// based on shader hash folklore, including David Hoskins-style "Hash without Sine" tricks.
+// the shader folklore archive claims responsibility.
 fn hash3(p: vec3<f32>) -> f32 {
     var q = fract(p * vec3<f32>(127.1, 311.7, 74.7));
     q += dot(q, q.yzx + 19.19);
@@ -77,7 +80,7 @@ fn hash3(p: vec3<f32>) -> f32 {
 
 // XXX:
 // same crime as above but in 2D.
-// more yoinked shit with touch of llm numbers
+// classic sin-hash folklore with fully recycled numbers.
 fn hash2(x: f32, y: f32) -> f32 {
     return fract(sin(x * 127.1 + y * 311.7) * 43758.5453);
 }
