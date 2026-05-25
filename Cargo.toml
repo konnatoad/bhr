@@ -9,7 +9,7 @@ rayon = "1.10"
 glam = "0.32.0"
 rand = "0.10.0"
 noise = "0.9"
-wgpu = "28.0.0"
+wgpu = "29.0.3"
 pollster = "0.4"
 bytemuck = { version = "1.16", features = ["derive"] }
 exr = "1.74.0"
