@@ -6,7 +6,7 @@ edition = "2024"
 [dependencies]
 image = "0.25"
 rayon = "1.12"
-glam = "0.32.0"
+glam = "0.33.0"
 rand = "0.10.0"
 noise = "0.9"
 wgpu = "29.0.3"
