@@ -10,7 +10,7 @@ glam = "0.34.2"
 rand = "0.10"
 noise = "0.9"
 wgpu = "30.0.0"
-pollster = "0.4"
+pollster = "1.0"
 bytemuck = { version = "1.16", features = ["derive"] }
 exr = "1.74.0"
 
